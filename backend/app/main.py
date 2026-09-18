@@ -1,0 +1,538 @@
+from __future__ import annotations
+import asyncio, csv, hashlib, io, json, math, os, re, shutil, uuid
+from zipfile import BadZipFile
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+import numpy as np
+import pymupdf
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+from .config import settings
+from .conversation_pdf import render_conversation_pdf, render_conversation_text
+from .enhancement import EnhancementSettings, auto_settings, render_enhancement
+from .database import get_db, SessionLocal
+from .image_metadata import capture_note_text, extract_capture_metadata
+from .image_details import original_image_details
+from .knowledge_base import MAX_DOCUMENT_BYTES, MAX_MEDIA_BYTES, MEDIA, SUPPORTED, TEXT_EDITABLE, add_document, delete_document, get_document, library_root, list_documents, search_documents, update_text_document
+from .models import AnalysisVersion, HotspotObservation, Inspection, Region, ThermalImage, Tower
+from .schemas import AnalysisStart, HotspotRequest, ImageDrawingInput, ImageNoteInput, InspectionCreate, Point, RegionCreate
+from .thermal import DecodeError, DjiCliDecoder, UnsupportedThermalImage, hotspots, image_signature, preview, region_mask, statistics
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="Tower Thermal Inspector API", version="1.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["*"], allow_headers=["*"])
+settings.storage_root.mkdir(parents=True, exist_ok=True)
+executor = ThreadPoolExecutor(max_workers=settings.decoder_concurrency)
+decoder = DjiCliDecoder(settings.dji_irp_path or Path("missing-dji-irp"), settings.dji_sdk_version, settings.decoder_timeout_seconds)
+
+def fail(status:int, code:str, message:str): raise HTTPException(status, {"code":code,"message":message})
+def analysis_dict(a): return {"id":a.id,"image_id":a.image_id,"version":a.version,"status":a.status,"sdk_version":a.sdk_version,"width":a.width,"height":a.height,"parameters":a.parameters_json,"parameter_provenance":a.parameters_provenance,"statistics":a.stats_json,"warnings":a.warnings_json,"error":a.error}
+@lru_cache(maxsize=8)
+def cached_matrix(path:str):
+    with np.load(path) as data:
+        matrix=data["temperatures"]; valid=data["valid_mask"]
+    matrix.setflags(write=False); valid.setflags(write=False)
+    return matrix,valid
+def load_matrix(a):
+    if a is None: fail(404,"analysis_not_found","Analysis not found")
+    if a.status != "completed" or not a.matrix_path: fail(409,"analysis_not_ready","Analysis is not completed")
+    try:
+        return cached_matrix(str(settings.storage_root/a.matrix_path))
+    except (OSError, KeyError, ValueError):
+        fail(409,"analysis_matrix_missing","Stored temperature matrix is missing or unreadable")
+
+def region_statistics(matrix,valid,mask):
+    try:
+        return statistics(matrix,valid&mask)
+    except DecodeError as exc:
+        fail(422,"empty_region",str(exc))
+
+@app.get("/api/health")
+def health(): return {"status":"ok","decoder_available":decoder.available(),"sdk_version":settings.dji_sdk_version}
+
+class LibrarySearch(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+
+class TextDocumentUpdate(BaseModel):
+    text: str = Field(max_length=2_000_000)
+
+class ConversationSource(BaseModel):
+    filename: str | None = Field(default=None, max_length=255)
+    locator: str | None = Field(default=None, max_length=255)
+    excerpt: str | None = Field(default=None, max_length=1500)
+    title: str | None = Field(default=None, max_length=255)
+    url: str | None = Field(default=None, max_length=2048)
+
+class ConversationMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    text: str = Field(min_length=1, max_length=20000)
+    sources: list[ConversationSource] = Field(default_factory=list, max_length=20)
+    webSources: list[ConversationSource] = Field(default_factory=list, max_length=20)
+
+class ConversationExport(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    format: Literal["pdf", "txt"] = "pdf"
+    image_name: str | None = Field(default=None, max_length=255)
+    messages: list[ConversationMessage] = Field(min_length=2, max_length=100)
+
+class InternetSearch(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+
+@app.get("/api/library/documents")
+def library_documents():
+    return list_documents(settings.storage_root)
+
+@app.post("/api/library/conversations", status_code=201)
+def save_conversation(body:ConversationExport):
+    if not any(message.role=="assistant" for message in body.messages):
+        fail(422,"conversation_has_no_answer","Ask the assistant a question before saving the conversation")
+    title=body.title.strip()
+    if not title: fail(422,"conversation_title_required","Enter a title for the conversation")
+    slug=re.sub(r"[^a-zA-Z0-9_-]+","-",title).strip("-")[:60] or "inspection-chat"
+    suffix=f".{body.format}"
+    temporary=library_root(settings.storage_root)/f"conversation-{uuid.uuid4().hex}{suffix}"
+    filename=f"{slug}-{datetime.now():%Y%m%d-%H%M%S}{suffix}"
+    try:
+        messages=[message.model_dump() for message in body.messages]
+        if body.format=="pdf":
+            temporary.write_bytes(render_conversation_pdf(messages,body.image_name,title))
+        else:
+            temporary.write_text(render_conversation_text(messages,body.image_name,title),encoding="utf-8")
+        return add_document(settings.storage_root,temporary,filename)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+@app.post("/api/library/documents",status_code=201)
+async def upload_library_document(file:UploadFile=File(...)):
+    suffix=Path(file.filename or "").suffix.lower()
+    if suffix not in SUPPORTED:
+        fail(422,"unsupported_document","Supported files: PDF, DOCX, XLSX, text, images, audio, and video")
+    temporary=library_root(settings.storage_root)/f"upload-{uuid.uuid4().hex}{suffix}"
+    size=0
+    try:
+        with temporary.open("wb") as output:
+            while chunk:=await file.read(1024*1024):
+                size+=len(chunk)
+                if size>(MAX_MEDIA_BYTES if suffix in MEDIA else MAX_DOCUMENT_BYTES): fail(413,"document_too_large","File exceeds the size limit")
+                output.write(chunk)
+        try: return add_document(settings.storage_root,temporary,file.filename or "document")
+        except (ValueError,RuntimeError,OSError,BadZipFile) as exc: fail(422,"document_unreadable",str(exc))
+    finally:
+        temporary.unlink(missing_ok=True)
+
+@app.get("/api/library/documents/{document_id}/file")
+def library_document_file(document_id:str):
+    document=get_document(settings.storage_root,document_id)
+    if not document: fail(404,"document_not_found","Document not found")
+    path=library_root(settings.storage_root)/document["stored_name"]
+    suffix=path.suffix.lower()
+    media_types={".mp3":"audio/mpeg",".wav":"audio/wav",".m4a":"audio/mp4",".ogg":"audio/ogg",".mp4":"video/mp4",".webm":"video/webm",".mov":"video/quicktime"}
+    return FileResponse(path,filename=document["filename"],media_type=media_types.get(suffix),content_disposition_type="inline" if suffix in {".pdf",".jpg",".jpeg",".png",".txt",".md",".csv",*MEDIA} else "attachment")
+
+@app.get("/api/library/documents/{document_id}/pages/{page_number}/preview")
+def library_pdf_page_preview(document_id:str,page_number:int):
+    document=get_document(settings.storage_root,document_id)
+    if not document: fail(404,"document_not_found","Document not found")
+    path=library_root(settings.storage_root)/document["stored_name"]
+    if path.suffix.lower()!=".pdf": fail(422,"not_pdf","This resource is not a PDF")
+    with pymupdf.open(path) as pdf:
+        if page_number<1 or page_number>len(pdf): fail(404,"page_not_found","PDF page not found")
+        pixels=pdf[page_number-1].get_pixmap(matrix=pymupdf.Matrix(1.7,1.7),alpha=False)
+        return StreamingResponse(io.BytesIO(pixels.tobytes("png")),media_type="image/png")
+
+@app.get("/api/library/documents/{document_id}/text")
+def library_document_text(document_id:str):
+    document=get_document(settings.storage_root,document_id)
+    if not document: fail(404,"document_not_found","Document not found")
+    if Path(document["stored_name"]).suffix.lower() not in TEXT_EDITABLE: fail(422,"document_not_editable","Only text files can be edited")
+    path=library_root(settings.storage_root)/document["stored_name"]
+    return {"text":path.read_text(encoding="utf-8-sig",errors="replace")}
+
+@app.put("/api/library/documents/{document_id}/text")
+def edit_library_document_text(document_id:str,body:TextDocumentUpdate):
+    try: return update_text_document(settings.storage_root,document_id,body.text)
+    except FileNotFoundError: fail(404,"document_not_found","Document not found")
+    except ValueError as exc: fail(422,"document_not_editable",str(exc))
+
+@app.delete("/api/library/documents/{document_id}",status_code=204)
+def remove_library_document(document_id:str):
+    if not delete_document(settings.storage_root,document_id): fail(404,"document_not_found","Document not found")
+
+@app.post("/api/library/search")
+def search_library(body:LibrarySearch):
+    return {"results":search_documents(settings.storage_root,body.query)}
+
+@app.post("/api/internet/search")
+def search_internet(body:InternetSearch):
+    """Run an explicitly requested web search through the configured server key."""
+    key=settings.openai_api_key or os.getenv("OPENAI_API_KEY")
+    if not key: fail(503,"internet_search_unavailable","Internet search is not configured on this server")
+    try:
+        import httpx
+        response=httpx.post("https://api.openai.com/v1/responses",headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"},json={"model":settings.openai_web_model or os.getenv("OPENAI_WEB_MODEL","gpt-4.1-mini"),"tools":[{"type":"web_search_preview"}],"instructions":"Answer clearly in Markdown with short paragraphs and useful headings or bullet lists. Do not add a duplicate list of sources; the interface displays source links separately. Web search cannot see the user's image. Never invent image details or claim you inspected the image itself.","input":body.query},timeout=45)
+        if response.status_code>=400: fail(502,"internet_search_failed",f"The internet search service returned an error ({response.status_code})")
+        payload=response.json(); results=[]; text=[]
+        for item in payload.get("output",[]):
+            if item.get("type")=="message":
+                for content in item.get("content",[]):
+                    if content.get("type")=="output_text":
+                        text.append(content.get("text", ""))
+                        for annotation in content.get("annotations",[]):
+                            if annotation.get("type") in {"url_citation","web_search_result"}:
+                                results.append({"title":annotation.get("title") or annotation.get("url"),"url":annotation.get("url")})
+        return {"answer":"\n".join(text).strip(),"sources":results}
+    except Exception as exc:
+        if isinstance(exc,HTTPException): raise
+        fail(502,"internet_search_failed",str(exc))
+
+@app.post("/api/inspections", status_code=201)
+def create_inspection(body: InspectionCreate, db:Session=Depends(get_db)):
+    tower=db.scalar(select(Tower).where(Tower.tower_code==body.tower_code))
+    if not tower: tower=Tower(tower_code=body.tower_code,circuit=body.circuit); db.add(tower); db.flush()
+    fields=body.model_dump(exclude={"tower_code","circuit"}); item=Inspection(tower_id=tower.id,**fields); db.add(item); db.commit()
+    return {"id":item.id,"tower_code":tower.tower_code,"circuit":tower.circuit,**fields,"created_at":item.created_at}
+
+@app.get("/api/inspections")
+def list_inspections(q:str|None=None, db:Session=Depends(get_db)):
+    stmt=select(Inspection,Tower).join(Tower)
+    if q: stmt=stmt.where(Tower.tower_code.contains(q) | Tower.circuit.contains(q))
+    return [{"id":i.id,"tower_code":t.tower_code,"circuit":t.circuit,"phase":i.phase,"created_at":i.created_at} for i,t in db.execute(stmt.order_by(Inspection.created_at.desc())).all()]
+
+@app.post("/api/inspections/{inspection_id}/images", status_code=201)
+async def upload_image(inspection_id:int, file:UploadFile=File(...), db:Session=Depends(get_db)):
+    if not db.get(Inspection,inspection_id): fail(404,"inspection_not_found","Inspection not found")
+    suffix=Path(file.filename or "upload").suffix[:10]; name=f"originals/{uuid.uuid4().hex}{suffix}"; path=settings.storage_root/name; path.parent.mkdir(parents=True,exist_ok=True)
+    digest=hashlib.sha256(); size=0
+    with path.open("wb") as out:
+        while chunk:=await file.read(1024*1024):
+            size+=len(chunk)
+            if size>settings.max_upload_mb*1024*1024: out.close(); path.unlink(missing_ok=True); fail(413,"upload_too_large",f"Maximum upload size is {settings.max_upload_mb} MB")
+            digest.update(chunk); out.write(chunk)
+    sig=image_signature(path)
+    if sig=="unknown": path.unlink(missing_ok=True); fail(400,"unreadable_file","Unsupported or corrupt file signature")
+    preview_name=f"previews/{uuid.uuid4().hex}.jpg"; preview_path=settings.storage_root/preview_name; preview_path.parent.mkdir(parents=True,exist_ok=True)
+    try: preview(path,preview_path)
+    except DecodeError: path.unlink(missing_ok=True); fail(400,"unreadable_file","Corrupt or unreadable image")
+    classification="pending_decoder" if sig=="jpeg" else "ordinary_image"
+    capture=extract_capture_metadata(path)
+    item=ThermalImage(inspection_id=inspection_id,original_name=file.filename or "upload",storage_name=name,sha256=digest.hexdigest(),classification=classification,camera_latitude=capture["latitude"],camera_longitude=capture["longitude"],metadata_json={"signature":sig,"preview_path":preview_name,"source_preserved":True,"capture_metadata":capture})
+    db.add(item); db.commit(); return {"id":item.id,"name":item.original_name,"classification":classification,"sha256":item.sha256,"preview_url":f"/api/images/{item.id}/preview"}
+
+@app.get("/api/inspections/{inspection_id}/images")
+def list_images(inspection_id:int,db:Session=Depends(get_db)):
+    result=[]
+    for x in db.scalars(select(ThermalImage).where(ThermalImage.inspection_id==inspection_id).order_by(ThermalImage.created_at.desc())).all():
+        latest=db.scalar(select(AnalysisVersion).where(AnalysisVersion.image_id==x.id).order_by(AnalysisVersion.version.desc()).limit(1))
+        result.append({"id":x.id,"name":x.original_name,"classification":x.classification,"sha256":x.sha256,"preview_url":f"/api/images/{x.id}/preview","latest_analysis":analysis_dict(latest) if latest else None})
+    return result
+
+@app.get("/api/images/{image_id}/preview")
+def get_preview(image_id:int,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    preview_name=(item.metadata_json or {}).get("preview_path")
+    path=settings.storage_root/preview_name if preview_name else None
+    if path is None or not path.is_file(): fail(404,"preview_not_found","Preview is not available")
+    return FileResponse(path,media_type="image/jpeg")
+
+class EnhancementRequest(BaseModel):
+    settings: EnhancementSettings = Field(default_factory=EnhancementSettings)
+    analysis_id: int | None = None
+
+
+def enhancement_source(image_id:int, analysis_id:int|None, db:Session):
+    from PIL import Image
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    preview_name=(item.metadata_json or {}).get("preview_path")
+    if not preview_name: fail(404,"preview_not_found","Preview is not available")
+    try:
+        with Image.open(settings.storage_root/preview_name) as source:
+            rgb=np.array(source.convert("RGB"))
+    except OSError:
+        fail(404,"preview_not_found","Preview is not available")
+    matrix=valid=None
+    if analysis_id is not None:
+        analysis=db.get(AnalysisVersion,analysis_id)
+        if analysis is None or analysis.image_id!=image_id:
+            fail(404,"analysis_not_found","Analysis does not belong to this image")
+        matrix,valid=load_matrix(analysis)
+    return rgb,matrix,valid
+
+
+@app.get("/api/images/{image_id}/enhancement")
+def get_enhancement(image_id:int,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    return EnhancementSettings.model_validate((item.metadata_json or {}).get("enhancement",{}))
+
+
+@app.put("/api/images/{image_id}/enhancement")
+def save_enhancement(image_id:int,body:EnhancementSettings,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    item.metadata_json={**(item.metadata_json or {}),"enhancement":body.model_dump()}
+    db.commit()
+    return body
+
+
+@app.post("/api/images/{image_id}/enhancement/preview")
+def enhancement_preview(image_id:int,body:EnhancementRequest,db:Session=Depends(get_db)):
+    rgb,matrix,valid=enhancement_source(image_id,body.analysis_id,db)
+    try:
+        return render_enhancement(rgb,body.settings,matrix,valid)
+    except ValueError as exc:
+        fail(422,"enhancement_unavailable",str(exc))
+
+
+@app.post("/api/images/{image_id}/enhancement/auto")
+def enhancement_auto(image_id:int,body:EnhancementRequest,db:Session=Depends(get_db)):
+    rgb,matrix,valid=enhancement_source(image_id,body.analysis_id,db)
+    try:
+        return auto_settings(rgb,matrix,valid)
+    except ValueError as exc:
+        fail(422,"enhancement_unavailable",str(exc))
+
+
+@app.get("/api/images/{image_id}/details")
+def image_details(image_id:int,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    source=settings.storage_root/item.storage_name
+    if not source.is_file(): fail(404,"image_file_missing","Original image is missing from storage")
+    capture=(item.metadata_json or {}).get("capture_metadata") or extract_capture_metadata(source)
+    try:
+        return original_image_details(source,capture,settings.dji_irp_path)
+    except (OSError, ValueError):
+        fail(400,"unreadable_file","Could not read image details")
+
+@app.get("/api/images/{image_id}/notes")
+def list_image_notes(image_id:int,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    return (item.metadata_json or {}).get("notes",[])
+
+@app.post("/api/images/{image_id}/capture-note")
+def ensure_capture_note(image_id:int,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    metadata=item.metadata_json or {}
+    capture=metadata.get("capture_metadata")
+    previous_capture=capture
+    if capture is None or not capture.get("overlay_checked"):
+        capture=extract_capture_metadata(settings.storage_root/item.storage_name)
+        item.camera_latitude=capture["latitude"]
+        item.camera_longitude=capture["longitude"]
+    notes=metadata.get("notes",[])
+    existing=next((note for note in notes if note.get("id")==metadata.get("capture_note_id")),None)
+    if existing and previous_capture:
+        lat,lon=previous_capture.get("latitude"),previous_capture.get("longitude")
+        old_gps=f"{lat:.6f}, {lon:.6f}" if lat is not None and lon is not None else "Not recorded"
+        old_stamp=previous_capture.get("captured_at")
+        old_date,old_time=old_stamp.split(" ",1) if old_stamp else ("Not recorded","Not recorded")
+        if old_stamp: old_time+=f" {previous_capture['time_zone']}" if previous_capture.get("time_zone") else " (camera time)"
+        old_generated=f"GPS: {old_gps}\nDate: {old_date}\nTime: {old_time}"
+        if existing.get("text")==old_generated:
+            existing={**existing,"text":capture_note_text(capture),"width":330,"height":160,"y":0.62}
+            notes=[existing if note.get("id")==existing["id"] else note for note in notes]
+    if existing and existing.get("text")==capture_note_text(capture) and existing.get("width")==260 and existing.get("height")==126:
+        existing={**existing,"width":330,"height":160,"y":0.62}
+        notes=[existing if note.get("id")==existing["id"] else note for note in notes]
+    if not any(note.get("id")==metadata.get("capture_note_id") for note in notes):
+        note={"id":uuid.uuid4().hex,"text":capture_note_text(capture),"x":0.03,"y":0.62,"font":"sans","font_size":14,"color":"yellow","width":330,"height":160}
+        notes=[*notes,note]
+        metadata={**metadata,"capture_note_id":note["id"]}
+    item.metadata_json={**metadata,"capture_metadata":capture,"notes":notes}
+    db.commit()
+    return notes
+
+@app.post("/api/images/{image_id}/notes",status_code=201)
+def create_image_note(image_id:int,body:ImageNoteInput,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    note={"id":uuid.uuid4().hex,**body.model_dump()}
+    metadata=item.metadata_json or {}; item.metadata_json={**metadata,"notes":[*metadata.get("notes",[]),note]}; db.commit()
+    return note
+
+@app.put("/api/images/{image_id}/notes/{note_id}")
+def update_image_note(image_id:int,note_id:str,body:ImageNoteInput,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    metadata=item.metadata_json or {}; notes=metadata.get("notes",[])
+    if not any(n["id"]==note_id for n in notes): fail(404,"note_not_found","Note not found")
+    updated={"id":note_id,**body.model_dump()}
+    item.metadata_json={**metadata,"notes":[updated if n["id"]==note_id else n for n in notes]}; db.commit()
+    return updated
+
+@app.delete("/api/images/{image_id}/notes/{note_id}",status_code=204)
+def delete_image_note(image_id:int,note_id:str,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    metadata=item.metadata_json or {}; notes=metadata.get("notes",[])
+    if not any(n["id"]==note_id for n in notes): fail(404,"note_not_found","Note not found")
+    item.metadata_json={**metadata,"notes":[n for n in notes if n["id"]!=note_id]}; db.commit()
+
+@app.get("/api/images/{image_id}/drawings")
+def list_image_drawings(image_id:int,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    return (item.metadata_json or {}).get("drawings",[])
+
+@app.post("/api/images/{image_id}/drawings",status_code=201)
+def create_image_drawing(image_id:int,body:ImageDrawingInput,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    drawing={"id":uuid.uuid4().hex,**body.model_dump()}
+    metadata=item.metadata_json or {}
+    item.metadata_json={**metadata,"drawings":[*metadata.get("drawings",[]),drawing]}
+    db.commit()
+    return drawing
+
+@app.put("/api/images/{image_id}/drawings/{drawing_id}")
+def update_image_drawing(image_id:int,drawing_id:str,body:ImageDrawingInput,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    metadata=item.metadata_json or {}; drawings=metadata.get("drawings",[])
+    if not any(d["id"]==drawing_id for d in drawings): fail(404,"drawing_not_found","Drawing not found")
+    updated={"id":drawing_id,**body.model_dump()}
+    item.metadata_json={**metadata,"drawings":[updated if d["id"]==drawing_id else d for d in drawings]}
+    db.commit()
+    return updated
+
+@app.delete("/api/images/{image_id}/drawings/{drawing_id}",status_code=204)
+def delete_image_drawing(image_id:int,drawing_id:str,db:Session=Depends(get_db)):
+    item=db.get(ThermalImage,image_id)
+    if not item: fail(404,"image_not_found","Image not found")
+    metadata=item.metadata_json or {}; drawings=metadata.get("drawings",[])
+    if not any(d["id"]==drawing_id for d in drawings): fail(404,"drawing_not_found","Drawing not found")
+    item.metadata_json={**metadata,"drawings":[d for d in drawings if d["id"]!=drawing_id]}
+    db.commit()
+
+def run_analysis(analysis_id:int):
+    db=SessionLocal(); analysis=db.get(AnalysisVersion,analysis_id); image=db.get(ThermalImage,analysis.image_id)
+    try:
+        analysis.status="processing"; db.commit(); source_path=(settings.storage_root/image.storage_name).resolve(); result=decoder.decode(source_path,analysis.parameters_json or {})
+        matrix_name=f"matrices/{uuid.uuid4().hex}.npz"; matrix_path=settings.storage_root/matrix_name; matrix_path.parent.mkdir(parents=True,exist_ok=True)
+        np.savez_compressed(matrix_path,temperatures=result.temperatures.astype(np.float32),valid_mask=result.valid_mask)
+        analysis.status="completed"; analysis.sdk_version=result.sdk_version; analysis.matrix_path=matrix_name; analysis.width=result.width; analysis.height=result.height
+        analysis.parameters_provenance=result.provenance; analysis.stats_json=statistics(result.temperatures,result.valid_mask); analysis.warnings_json=result.warnings; analysis.processed_at=datetime.utcnow()
+        image.classification="supported_radiometric"; image.camera_model=result.camera_model; image.metadata_json={**(image.metadata_json or {}),**result.metadata,"measurement_ranges":result.ranges}
+    except UnsupportedThermalImage as exc: analysis.status="failed"; analysis.error=str(exc); image.classification="ordinary_or_unsupported"
+    except Exception as exc: analysis.status="failed"; analysis.error=str(exc)
+    finally: db.commit(); db.close()
+
+@app.post("/api/images/{image_id}/analyses",status_code=202)
+def start_analysis(image_id:int,body:AnalysisStart,background:BackgroundTasks,db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    if not decoder.available(): fail(503,"sdk_unavailable","DJI Thermal SDK executable is unavailable; measurement is disabled")
+    params=body.parameters.model_dump(exclude_none=True); existing=db.scalar(select(AnalysisVersion).where(AnalysisVersion.image_id==image_id,AnalysisVersion.parameters_json==params,AnalysisVersion.status=="completed"))
+    if existing: return analysis_dict(existing)
+    version=(db.scalar(select(func.max(AnalysisVersion.version)).where(AnalysisVersion.image_id==image_id)) or 0)+1
+    item=AnalysisVersion(image_id=image_id,version=version,status="queued",parameters_json=params,warnings_json=[]); db.add(item); db.commit(); background.add_task(executor.submit,run_analysis,item.id); return analysis_dict(item)
+
+@app.get("/api/analyses/{analysis_id}")
+def get_analysis(analysis_id:int,db:Session=Depends(get_db)):
+    item=db.get(AnalysisVersion,analysis_id)
+    if not item: fail(404,"analysis_not_found","Analysis not found")
+    return analysis_dict(item)
+
+@app.get("/api/analyses/{analysis_id}/pixels/{x}/{y}")
+def pixel(analysis_id:int,x:int,y:int,db:Session=Depends(get_db)):
+    item=db.get(AnalysisVersion,analysis_id); matrix,valid=load_matrix(item)
+    if not (0<=x<matrix.shape[1] and 0<=y<matrix.shape[0]): fail(422,"coordinate_out_of_bounds","Pixel is outside the native matrix")
+    return {"x":x,"y":y,"temperature_c":float(matrix[y,x]) if valid[y,x] else None,"valid":bool(valid[y,x])}
+
+@app.get("/api/analyses/{analysis_id}/range-stats")
+def range_statistics(analysis_id:int,minimum_c:float=Query(ge=-20,le=150),maximum_c:float=Query(ge=-20,le=150),db:Session=Depends(get_db)):
+    if not math.isfinite(minimum_c) or not math.isfinite(maximum_c) or minimum_c>=maximum_c: fail(422,"invalid_temperature_range","Choose finite bounds with minimum below maximum")
+    item=db.get(AnalysisVersion,analysis_id)
+    if not item: fail(404,"analysis_not_found","Analysis not found")
+    matrix,valid=load_matrix(item)
+    in_range=valid & (matrix>=minimum_c) & (matrix<=maximum_c)
+    def measured(mask):
+        if not mask.any(): return {"minimum_c":None,"maximum_c":None,"mean_c":None,"valid_pixels":0,"minimum_location":None,"maximum_location":None}
+        return statistics(matrix,mask)
+    regions={str(r.id):measured(in_range & region_mask(matrix.shape,r.kind,r.geometry_json["points"])) for r in db.scalars(select(Region).where(Region.analysis_id==analysis_id)).all()}
+    return {"minimum_c":minimum_c,"maximum_c":maximum_c,"full":measured(in_range),"regions":regions}
+
+@app.post("/api/analyses/{analysis_id}/regions",status_code=201)
+def create_region(analysis_id:int,body:RegionCreate,db:Session=Depends(get_db)):
+    analysis=db.get(AnalysisVersion,analysis_id); matrix,valid=load_matrix(analysis); points=[p.model_dump() for p in body.points]
+    mask=region_mask(matrix.shape,body.kind,points); stat=region_statistics(matrix,valid,mask)
+    minimum=minimum_selection(matrix,valid,mask,body.minimum_point.model_dump()) if body.minimum_point else None
+    item=Region(analysis_id=analysis_id,name=body.name,kind=body.kind,geometry_json={"points":points,"minimum_selection":minimum},stats_json=stat,is_reference=body.is_reference); db.add(item); db.commit(); return region_dict(item)
+
+def minimum_selection(matrix,valid,mask,point):
+    if point is None: return None
+    x,y=point["x"],point["y"]
+    if not (0<=y<matrix.shape[0] and 0<=x<matrix.shape[1] and valid[y,x] and mask[y,x]): return None
+    return {"x":x,"y":y,"temperature_c":float(matrix[y,x])}
+
+def region_dict(item):
+    return {"id":item.id,"name":item.name,"kind":item.kind,"points":item.geometry_json["points"],"statistics":item.stats_json,"is_reference":item.is_reference,"minimum_selection":item.geometry_json.get("minimum_selection")}
+
+@app.put("/api/regions/{region_id}")
+def update_region(region_id:int,body:RegionCreate,db:Session=Depends(get_db)):
+    item=db.get(Region,region_id)
+    if not item: fail(404,"region_not_found","Region not found")
+    analysis=db.get(AnalysisVersion,item.analysis_id); matrix,valid=load_matrix(analysis); points=[p.model_dump() for p in body.points]; mask=region_mask(matrix.shape,body.kind,points); stat=region_statistics(matrix,valid,mask)
+    previous=item.geometry_json.get("minimum_selection")
+    selected_point=body.minimum_point.model_dump() if "minimum_point" in body.model_fields_set and body.minimum_point else (None if "minimum_point" in body.model_fields_set else previous)
+    minimum=minimum_selection(matrix,valid,mask,selected_point)
+    item.name=body.name; item.kind=body.kind; item.geometry_json={"points":points,"minimum_selection":minimum}; item.stats_json=stat; item.is_reference=body.is_reference; db.commit(); return region_dict(item)
+
+@app.put("/api/regions/{region_id}/minimum")
+def set_region_minimum(region_id:int,point:Point,db:Session=Depends(get_db)):
+    item=db.get(Region,region_id)
+    if not item: fail(404,"region_not_found","Region not found")
+    analysis=db.get(AnalysisVersion,item.analysis_id); matrix,valid=load_matrix(analysis)
+    mask=region_mask(matrix.shape,item.kind,item.geometry_json["points"])
+    selected=minimum_selection(matrix,valid,mask,point.model_dump())
+    if selected is None: fail(422,"invalid_minimum_point","Choose a valid measured pixel inside this region")
+    item.geometry_json={**item.geometry_json,"minimum_selection":selected}; db.commit()
+    return {"minimum_selection":selected,"automatic_minimum_c":item.stats_json["minimum_c"]}
+
+@app.delete("/api/regions/{region_id}/minimum")
+def reset_region_minimum(region_id:int,db:Session=Depends(get_db)):
+    item=db.get(Region,region_id)
+    if not item: fail(404,"region_not_found","Region not found")
+    item.geometry_json={**item.geometry_json,"minimum_selection":None}; db.commit()
+    return {"minimum_selection":None}
+
+@app.get("/api/analyses/{analysis_id}/regions")
+def list_regions(analysis_id:int,db:Session=Depends(get_db)):
+    return [region_dict(r) for r in db.scalars(select(Region).where(Region.analysis_id==analysis_id)).all()]
+
+@app.delete("/api/regions/{region_id}",status_code=204)
+def delete_region(region_id:int,db:Session=Depends(get_db)):
+    item=db.get(Region,region_id)
+    if not item: fail(404,"region_not_found","Region not found")
+    db.delete(item); db.commit()
+
+@app.post("/api/regions/{region_id}/hotspots")
+def find_hotspots(region_id:int,body:HotspotRequest,db:Session=Depends(get_db)):
+    region=db.get(Region,region_id)
+    if not region: fail(404,"region_not_found","Region not found")
+    analysis=db.get(AnalysisVersion,region.analysis_id); matrix,valid=load_matrix(analysis); roi=region_mask(matrix.shape,region.kind,region.geometry_json["points"])
+    found=hotspots(matrix,valid,roi,body.threshold_c,body.minimum_area); reference=None
+    if body.reference_region_id:
+        ref=db.get(Region,body.reference_region_id)
+        if not ref or ref.analysis_id!=analysis.id: fail(422,"invalid_reference","Reference region must belong to this analysis")
+        reference=ref.stats_json["mean_c"]
+    delta=region.stats_json["maximum_c"]-reference if reference is not None else None
+    return {"actual_maximum_c":region.stats_json["maximum_c"],"threshold_c":body.threshold_c,"reference_mean_c":reference,"delta_t_c":delta,"delta_definition":"region maximum − reference region mean" if reference is not None else None,"candidates":found,"interpretation":"Thermal observations requiring inspection review; not automatic fault diagnoses."}
+
+@app.get("/api/analyses/{analysis_id}/matrix.csv")
+def matrix_csv(analysis_id:int,db:Session=Depends(get_db)):
+    item=db.get(AnalysisVersion,analysis_id); matrix,valid=load_matrix(item)
+    def rows():
+        yield "# units=Celsius; rows=y; columns=x; invalid=blank\r\n"; yield ","+",".join(map(str,range(matrix.shape[1])))+"\r\n"
+        for y,row in enumerate(matrix): yield str(y)+","+",".join(f"{v:.6f}" if valid[y,x] else "" for x,v in enumerate(row))+"\r\n"
+    return StreamingResponse(rows(),media_type="text/csv",headers={"Content-Disposition":f'attachment; filename="analysis-{analysis_id}-matrix.csv"'})

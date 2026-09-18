@@ -1,0 +1,2 @@
+.rotateHandle small{position:absolute;left:29px;background:#071015dd;border:1px solid #4a5a61;border-radius:4px;padding:3px 5px;color:#fff;font:10px monospace;white-space:nowrap}
+.freeHandle{right:auto!important;bottom:auto!important;transform:translate(-50%,-50%)!important}.widthFree{cursor:ew-resize}.heightFree{cursor:ns-resize}.cornerFree{cursor:nwse-resize}

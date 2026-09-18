@@ -1,0 +1,7 @@
+.zoomValue{min-width:45px;padding:4px 2px;border:0;border-radius:4px;background:none;color:#d9e4e8;font-size:11px;cursor:pointer}
+.zoomValue:hover:not(:disabled){background:#263b44}
+.zoomValue:disabled{color:#82969e;cursor:default}
+.viewerbar .tool:disabled{opacity:.4;cursor:default}
+.thermal{transform-origin:center center}
+.thermal.zoomed.interaction-select{cursor:grab}
+.thermal.zoomed.interaction-select:active{cursor:grabbing}

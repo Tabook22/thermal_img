@@ -1,0 +1,2 @@
+.marker b,.probe b{background:transparent!important;border:0!important;color:#fff;text-shadow:-1px -1px 0 #071015,1px -1px 0 #071015,-1px 1px 0 #071015,1px 1px 0 #071015,0 2px 5px #000;padding:4px 7px}.marker .movableLabel{cursor:grab;touch-action:none;z-index:20}.marker .movableLabel:active{cursor:grabbing}.marker span{flex:none}
+.probe{background:transparent!important}

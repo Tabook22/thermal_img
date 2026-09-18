@@ -1,0 +1,19 @@
+.workspace{position:relative}
+.snapshotArrow{position:absolute;inset:0;width:100%;height:100%;z-index:45;pointer-events:none;overflow:visible}
+.snapshotArrow line,.snapshotArrow path{fill:none;stroke:#f45d37;stroke-width:5;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #111)}
+.snapshotWidget{position:absolute;z-index:50;top:64px;right:calc(350px + 18px);display:flex;flex-direction:column;align-items:flex-end;gap:8px;pointer-events:none}
+.snapshotWidget>*{pointer-events:auto}
+.snapshotTrigger{display:flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid #d5874b;border-radius:6px;background:#192832e8;color:#ffe2bd;font-size:11px;font-weight:700;box-shadow:0 3px 12px #0008;cursor:pointer}
+.snapshotTrigger:hover:not(:disabled){background:#2b3d47}
+.snapshotTrigger:disabled{opacity:.45;cursor:default}
+.snapshotCard{position:relative;width:224px;padding:0;border:0;background:transparent;box-shadow:0 9px 22px #0009;cursor:grab;touch-action:none;user-select:none}
+.snapshotCard:active{cursor:grabbing}
+.snapshotCard img{display:block;width:100%;height:100%;object-fit:contain;border:1px solid #82949a;background:#080d13;pointer-events:none}
+.snapshotClose{position:absolute;top:9px;right:9px;z-index:1;width:25px;height:25px;border:1px solid #b6c1c5;border-radius:4px;background:#101a1eea;color:white;font-size:19px;line-height:1;cursor:pointer}
+.snapshotResizeHandle{position:absolute;z-index:2;width:15px;height:15px;border:2px solid #f06a2b;border-radius:50%;background:white;box-shadow:0 0 0 2px #132029;touch-action:none}
+.snapshotResizeHandle.width{left:-8px;top:50%;transform:translateY(-50%);cursor:ew-resize}
+.snapshotResizeHandle.height{left:50%;bottom:-8px;transform:translateX(-50%);cursor:ns-resize}
+.snapshotResizeHandle.both{left:-8px;bottom:-8px;cursor:nesw-resize}
+@media(max-width:900px){.snapshotWidget{right:16px}.snapshotCard{width:min(224px,45vw)}}
+
+.snapshotArrowNode{pointer-events:all;cursor:move;touch-action:none;fill:white;stroke:#f45d37;stroke-width:3}.snapshotControls{position:absolute;top:calc(100% + 14px);right:0;width:224px;padding:10px;border:1px solid #526975;border-radius:7px;background:#10232af5;color:#eef8fa;cursor:default;user-select:text}.snapshotControls label{display:block;font-size:12px}.snapshotControls output{float:right}.snapshotControls input{display:block;width:100%;accent-color:#f97336}.snapshotControls small{display:block;font-size:10px;color:#b8cbd2;margin:4px 0 8px}.snapshotControls button{padding:5px 8px;border:1px solid #63808a;border-radius:4px;background:#243e48;color:white;font-size:11px;cursor:pointer}

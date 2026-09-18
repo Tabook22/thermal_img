@@ -1,0 +1,12 @@
+.env
+__pycache__/
+.pytest_cache/
+.venv/
+.venv312/
+.uv-cache/
+.uv-python/
+node_modules/
+dist/
+storage/
+.local-sdk/
+*.pyc

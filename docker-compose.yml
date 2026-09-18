@@ -1,0 +1,35 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: tower_thermal
+      MYSQL_USER: thermal
+      MYSQL_PASSWORD: thermal
+      MYSQL_ROOT_PASSWORD: change-me
+    ports: ["3306:3306"]
+    volumes: [mysql_data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+pymysql://thermal:thermal@db:3306/tower_thermal
+      STORAGE_ROOT: /data
+    ports: ["8000:8000"]
+    volumes:
+      - thermal_data:/data
+      # Mount a licensed Linux x64 DJI SDK directory and set DJI_IRP_PATH accordingly.
+    depends_on:
+      db: {condition: service_healthy}
+  web:
+    build: ./frontend
+    ports: ["5173:80"]
+    depends_on: [api]
+volumes:
+  mysql_data:
+  thermal_data:
+
