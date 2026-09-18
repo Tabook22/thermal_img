@@ -1,6 +1,8 @@
 .env
 __pycache__/
 .pytest_cache/
+.pytest-*/
+test-tmp-*/
 .venv/
 .venv312/
 .uv-cache/
@@ -10,3 +12,4 @@ dist/
 storage/
 .local-sdk/
 *.pyc
+backend/enhancement-server.*.log
