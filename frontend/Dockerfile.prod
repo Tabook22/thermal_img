@@ -8,6 +8,6 @@ ENV VITE_BASE_PATH=${VITE_BASE_PATH}
 RUN pnpm build
 
 FROM nginxinc/nginx-unprivileged:stable-alpine
-COPY --from=build /app/dist /usr/share/nginx/html/thermal
+COPY --from=build --chown=nginx:nginx /app/dist /usr/share/nginx/html/thermal
 COPY --chown=nginx:nginx --chmod=0644 nginx.prod.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8080
