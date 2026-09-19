@@ -15,6 +15,7 @@ from starlette.background import BackgroundTask
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from .config import settings
+from .branding import BrandingSettings, logo_path, public_branding, save_branding, store_logo
 from .conversation_pdf import render_conversation_pdf, render_conversation_text
 from .enhancement import EnhancementSettings, auto_settings, render_enhancement
 from .database import get_db, SessionLocal
@@ -57,6 +58,38 @@ def region_statistics(matrix,valid,mask):
 
 @app.get("/api/health")
 def health(): return {"status":"ok","decoder_available":decoder.available(),"sdk_version":settings.dji_sdk_version}
+
+@app.get("/api/settings/branding")
+def get_branding():
+    return public_branding(settings.storage_root)
+
+@app.put("/api/settings/branding")
+def update_branding(body:BrandingSettings):
+    save_branding(settings.storage_root,body)
+    return public_branding(settings.storage_root)
+
+@app.post("/api/settings/logos/{kind}")
+async def upload_branding_logo(kind:Literal["company","application"],file:UploadFile=File(...)):
+    suffix=Path(file.filename or "logo").suffix.lower()
+    if suffix not in {".png",".jpg",".jpeg"}: fail(422,"unsupported_logo","Choose a PNG or JPEG logo")
+    temporary=settings.storage_root/"branding"/f"upload-{uuid.uuid4().hex}{suffix}"; temporary.parent.mkdir(parents=True,exist_ok=True)
+    size=0
+    try:
+        with temporary.open("wb") as output:
+            while chunk:=await file.read(1024*1024):
+                size+=len(chunk)
+                if size>5*1024*1024: fail(413,"logo_too_large","Logo must be 5 MB or smaller")
+                output.write(chunk)
+        try: store_logo(settings.storage_root,kind,temporary)
+        except ValueError as exc: fail(422,"invalid_logo",str(exc))
+        return public_branding(settings.storage_root)
+    finally: temporary.unlink(missing_ok=True)
+
+@app.get("/api/settings/assets/{kind}-logo")
+def branding_logo(kind:Literal["company","application"]):
+    path=logo_path(settings.storage_root,kind)
+    if not path.is_file(): fail(404,"logo_not_found","Logo has not been configured")
+    return FileResponse(path,media_type="image/png",headers={"Cache-Control":"no-cache"})
 
 class LibrarySearch(BaseModel):
     query: str = Field(min_length=2, max_length=500)
