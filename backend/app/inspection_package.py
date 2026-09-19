@@ -42,6 +42,9 @@ class ExportNote(ImageNoteInput):
 class ExportWorkspace(BaseModel):
     enhancement: EnhancementSettings = Field(default_factory=EnhancementSettings)
     insulator_label: Literal["inner", "outer"] | None = None
+    insulator_label_x: float = Field(0.78, ge=0, le=1)
+    insulator_label_y: float = Field(0.025, ge=0, le=1)
+    insulator_label_width: float = Field(0.2, ge=0.11, le=0.42)
     probes: list[ExportProbe] = Field(default_factory=list, max_length=500)
     drawings: list[ExportDrawing] = Field(default_factory=list, max_length=500)
     notes: list[ExportNote] = Field(default_factory=list, max_length=500)
@@ -100,11 +103,12 @@ def render_report_png(
         badge_font = _font(max(15, round(width / 38)))
         text_box = draw.textbbox((0, 0), label, font=badge_font)
         text_width = text_box[2] - text_box[0]
-        pad = max(9, round(width / 90)); icon_width = max(18, round(width / 34))
-        badge_width = text_width + icon_width + pad * 3
-        badge_height = max(42, round(width / 12))
-        right = width - max(10, round(width / 80)); left = right - badge_width
-        top = max(10, round(width / 80)); bottom = top + badge_height
+        badge_width = min(width, max(text_width + 20, round(width * workspace.insulator_label_width)))
+        badge_height = min(height, max(24, round(badge_width / 2.2)))
+        left = min(width - badge_width, round(width * workspace.insulator_label_x))
+        top = min(height - badge_height, round(height * workspace.insulator_label_y))
+        right, bottom = left + badge_width, top + badge_height
+        pad = max(6, round(badge_width / 16)); icon_width = max(14, round(badge_width / 8))
         draw.rounded_rectangle((left, top, right, bottom), radius=max(5, round(width / 160)), fill=(8, 16, 24, 210), outline="white", width=max(2, round(width / 420)))
         cx = left + pad + icon_width / 2
         draw.line((cx, top + 8, cx, bottom - 8), fill="#e8eef0", width=max(2, round(width / 420)))
