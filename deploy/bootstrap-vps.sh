@@ -48,6 +48,16 @@ echo '[3/8] Creating protected production secrets'
 if [[ ! -f .env ]]; then
     sudo -u nasser python3 deploy/create-production-env.py
 fi
+python3 - .env <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+lines = [line for line in lines if not line.startswith("MYSQL_") and not line.startswith("DATABASE_URL=")]
+lines.insert(0, "DATABASE_URL=sqlite:////data/thermal.db")
+path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+PY
 chown nasser:nasser .env
 chmod 600 .env
 
@@ -66,6 +76,10 @@ chmod 640 "$AUTH_FILE"
 
 echo '[5/8] Building the application and applying database migrations'
 compose=(docker compose -p "$PROJECT" -f docker-compose.prod.yml)
+if docker ps -a --format '{{.Names}}' | grep -qx thermal_inspector-db-1; then
+    echo 'Stopping the unused MySQL container; its volume is retained.'
+    docker stop thermal_inspector-db-1 >/dev/null || true
+fi
 if [[ -x /opt/dji-thermal-sdk/utility/bin/linux/release_x64/dji_irp ]]; then
     if grep -qx 'DJI_SDK_VERSION=unavailable' .env; then
         echo 'A DJI executable exists but its version is unverified; decoder remains disabled.'
@@ -74,7 +88,6 @@ if [[ -x /opt/dji-thermal-sdk/utility/bin/linux/release_x64/dji_irp ]]; then
     fi
 fi
 "${compose[@]}" build api web
-"${compose[@]}" up -d db
 "${compose[@]}" run --rm --no-deps api alembic upgrade head
 "${compose[@]}" up -d api web
 

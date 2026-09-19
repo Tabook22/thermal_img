@@ -31,11 +31,12 @@ if [[ -x /opt/dji-thermal-sdk/utility/bin/linux/release_x64/dji_irp ]]; then
 fi
 dc() { docker compose -p "$PROJECT" "${compose[@]}" "$@"; }
 
-# Start an existing database volume so every update has a fresh logical backup.
-if docker volume inspect "${PROJECT}_mysql_data" >/dev/null 2>&1; then
-    dc up -d db
-    dc exec -T db sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysqldump -u root --single-transaction --routines --triggers --databases "$MYSQL_DATABASE"' | gzip -9 > "$backup_dir/database.sql.gz"
-    test -s "$backup_dir/database.sql.gz"
+# Use SQLite's online backup API when an application database already exists.
+if dc ps --status running --services 2>/dev/null | grep -qx api \
+   && dc exec -T api test -f /data/thermal.db; then
+    dc exec -T api python -c "import sqlite3; source=sqlite3.connect('/data/thermal.db'); target=sqlite3.connect('/tmp/thermal-backup.db'); source.backup(target); target.close(); source.close()"
+    dc cp api:/tmp/thermal-backup.db "$backup_dir/thermal.db"
+    test -s "$backup_dir/thermal.db"
 fi
 
 updated=0
@@ -46,7 +47,7 @@ rollback() {
         git reset --hard "$old_commit"
         dc build api web
         dc up -d --no-deps api web || true
-        echo "Database backup: $backup_dir/database.sql.gz (if present). Review migration compatibility before restoring data." >&2
+        echo "SQLite backup: $backup_dir/thermal.db (if present). Review migration compatibility before restoring data." >&2
     fi
     exit "$code"
 }
@@ -56,7 +57,6 @@ git fetch origin main
 git merge --ff-only origin/main
 updated=1
 dc build api web
-dc up -d db
 dc run --rm --no-deps api alembic upgrade head
 dc up -d api web
 for attempt in $(seq 1 30); do
