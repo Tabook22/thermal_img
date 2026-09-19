@@ -19,9 +19,9 @@
 .insulatorToolIcon svg{width:13px!important;height:27px!important;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .insulatorToolIcon b{position:absolute;right:0;bottom:1px;min-width:12px;height:12px;border-radius:6px;background:#263b44;color:#fff;font-size:8px;line-height:12px;text-align:center}
 .tool.active .insulatorToolIcon b{background:#f06a2b}
-.insulatorTypeBadge{position:absolute;z-index:12;aspect-ratio:2.2;padding:4cqw 6cqw;display:flex;align-items:center;justify-content:center;gap:7%;border:2px solid rgba(255,255,255,.92);border-radius:3px;background:rgba(7,16,21,.72);box-shadow:0 3px 14px rgba(0,0,0,.4);color:#fff;cursor:move;touch-action:none;user-select:none;container-type:inline-size;text-shadow:0 1px 3px #000}
-.insulatorTypeBadge svg{width:16%;height:72%;fill:none;stroke:#f4f7f8;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #000)}
+.insulatorTypeBadge{position:absolute;z-index:12;aspect-ratio:2.2;padding:.22em .42em;display:flex;align-items:center;justify-content:center;gap:7%;border:2px solid rgba(255,255,255,.92);border-radius:3px;background:rgba(7,16,21,.72);box-shadow:0 3px 14px rgba(0,0,0,.4);color:#fff;cursor:move;touch-action:none;user-select:none;text-shadow:0 1px 3px #000}
+.insulatorTypeBadge svg{width:.72em;height:1.7em;fill:none;stroke:#f4f7f8;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #000)}
 .insulatorTypeBadge .insulatorStem{stroke-width:1.2}.insulatorTypeBadge .insulatorBase{stroke-width:2}
-.insulatorTypeBadge strong{font-size:18cqw;font-weight:600;letter-spacing:.2px;text-transform:capitalize}
+.insulatorTypeBadge strong{font-size:1em;font-weight:600;letter-spacing:.2px;text-transform:capitalize}
 .insulatorTypeBadge.inner{border-color:#f1f7fa}.insulatorTypeBadge.outer{border-color:#ffd6bd}
 .insulatorBadgeResize{position:absolute;right:-7px;bottom:-7px;width:15px;height:15px;border:2px solid #ff7b2b;border-radius:50%;background:#fff;box-shadow:0 1px 5px #000;cursor:nwse-resize;touch-action:none}.insulatorTypeBadge:hover,.insulatorTypeBadge:focus-within{outline:1px dashed #ff9a61;outline-offset:3px}@media(max-width:1100px){.insulatorBadgeResize{right:-6px;bottom:-6px;width:13px;height:13px}}

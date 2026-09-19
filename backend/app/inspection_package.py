@@ -42,9 +42,9 @@ class ExportNote(ImageNoteInput):
 class ExportWorkspace(BaseModel):
     enhancement: EnhancementSettings = Field(default_factory=EnhancementSettings)
     insulator_label: Literal["inner", "outer"] | None = None
-    insulator_label_x: float = Field(0.78, ge=0, le=1)
+    insulator_label_x: float = Field(0.81, ge=0, le=1)
     insulator_label_y: float = Field(0.025, ge=0, le=1)
-    insulator_label_width: float = Field(0.2, ge=0.06, le=0.55)
+    insulator_label_width: float = Field(0.17, ge=0.06, le=0.55)
     probes: list[ExportProbe] = Field(default_factory=list, max_length=500)
     drawings: list[ExportDrawing] = Field(default_factory=list, max_length=500)
     notes: list[ExportNote] = Field(default_factory=list, max_length=500)
