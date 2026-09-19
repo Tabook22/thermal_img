@@ -24,3 +24,10 @@ def test_coordinate_mapping_formula():
 def test_circle_region_mask():
     mask=region_mask((20,20),"circle",[{"x":10,"y":10},{"x":15,"y":10}])
     assert mask[10,10] and mask[10,15] and not mask[0,0]
+
+
+def test_line_region_samples_each_calibrated_pixel_on_the_path():
+    mask = region_mask((8, 8), "line", [{"x": 1, "y": 1}, {"x": 6, "y": 6}])
+    assert mask.sum() == 6
+    assert all(mask[i, i] for i in range(1, 7))
+    assert not mask[1, 2]

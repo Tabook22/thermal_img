@@ -75,3 +75,32 @@ def test_missing_analysis_and_empty_region_are_client_errors(monkeypatch):
                 points=[Point(x=0, y=0), Point(x=1, y=1)]), db)
         assert empty.value.status_code == 422
         assert empty.value.detail["code"] == "empty_region"
+
+
+def test_line_temperature_region_is_created_and_recalculated(monkeypatch):
+    matrix = np.arange(25, dtype=np.float32).reshape(5, 5)
+    valid = np.ones_like(matrix, dtype=bool)
+    monkeypatch.setattr(main, "load_matrix", lambda _: (matrix, valid))
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(AnalysisVersion(id=3, image_id=1, version=1, status="completed"))
+        db.commit()
+
+        created = main.create_region(3, RegionCreate(
+            name="Line 1", kind="line",
+            points=[Point(x=0, y=0), Point(x=4, y=4)],
+        ), db)
+        assert created["kind"] == "line"
+        assert created["statistics"]["minimum_c"] == 0.0
+        assert created["statistics"]["maximum_c"] == 24.0
+        assert created["statistics"]["mean_c"] == 12.0
+        assert created["statistics"]["valid_pixels"] == 5
+
+        updated = main.update_region(created["id"], RegionCreate(
+            name="Line 1", kind="line",
+            points=[Point(x=0, y=4), Point(x=4, y=0)],
+        ), db)
+        assert updated["statistics"]["minimum_location"] == {"x": 4, "y": 0}
+        assert updated["statistics"]["maximum_location"] == {"x": 0, "y": 4}
+        assert updated["statistics"]["mean_c"] == 12.0

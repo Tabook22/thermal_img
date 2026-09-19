@@ -111,7 +111,12 @@ def render_report_png(
         if not points:
             continue
         coords = [pixel(p) for p in points]
-        if region.get("kind") == "circle" and len(coords) >= 2:
+        if region.get("kind") == "line" and len(coords) >= 2:
+            draw.line(coords[:2], fill="#f5e65a", width=max(2, round(width/420)))
+            midpoint=((coords[0][0]+coords[1][0])/2,(coords[0][1]+coords[1][1])/2)
+            mean=(region.get("statistics") or {}).get("mean_c")
+            if mean is not None: _label(draw,(midpoint[0]+7,midpoint[1]+7),f"{region.get('name','Line')} AVG {mean:.1f}°C","#f5e65a",small)
+        elif region.get("kind") == "circle" and len(coords) >= 2:
             (cx, cy), (ex, ey) = coords[:2]
             radius = math.hypot(ex-cx, ey-cy)
             draw.ellipse((cx-radius, cy-radius, cx+radius, cy+radius), outline="#ffd35a", width=max(2, round(width/320)))

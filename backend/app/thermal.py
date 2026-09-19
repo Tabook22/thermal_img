@@ -77,6 +77,9 @@ def region_mask(shape: tuple[int,int], kind: str, points: list[dict]) -> np.ndar
         x1,y1 = pts[0]; x2,y2 = pts[1]; cv2.rectangle(mask,(min(x1,x2),min(y1,y2)),(max(x1,x2),max(y1,y2)),1,-1)
     elif kind == "circle":
         x1,y1 = pts[0]; x2,y2 = pts[1]; radius=max(1,int(round(((x2-x1)**2+(y2-y1)**2)**0.5))); cv2.circle(mask,(int(x1),int(y1)),radius,1,-1)
+    elif kind == "line":
+        # LINE_8 gives a deterministic one-pixel sample path matching the displayed endpoints.
+        cv2.line(mask, tuple(pts[0]), tuple(pts[1]), 1, 1, cv2.LINE_8)
     else: cv2.fillPoly(mask,[pts],1)
     return mask.astype(bool)
 

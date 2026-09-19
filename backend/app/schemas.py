@@ -50,11 +50,11 @@ class ImageDrawingInput(BaseModel):
         return self
 
 class RegionCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=100); kind: str = Field(pattern="^(rectangle|polygon|circle)$"); points: list[Point]; is_reference: bool = False
+    name: str = Field(min_length=1, max_length=100); kind: str = Field(pattern="^(rectangle|polygon|circle|line)$"); points: list[Point]; is_reference: bool = False
     minimum_point: Point | None = None
     @model_validator(mode="after")
     def valid_points(self):
-        need = 2 if self.kind in ("rectangle", "circle") else 3
+        need = 2 if self.kind in ("rectangle", "circle", "line") else 3
         if len(self.points) < need: raise ValueError(f"{self.kind} requires at least {need} points")
         return self
 class HotspotRequest(BaseModel): threshold_c: float; minimum_area: int = Field(1, ge=1, le=100000); reference_region_id: int | None = None
