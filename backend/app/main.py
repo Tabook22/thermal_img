@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .branding import BrandingSettings, logo_path, public_branding, save_branding, store_logo
 from .conversation_pdf import render_conversation_pdf, render_conversation_text
+from .dji_palette import official_palette_luts
 from .enhancement import EnhancementSettings, auto_settings, render_enhancement
 from .database import get_db, SessionLocal
 from .image_metadata import capture_note_text, extract_capture_metadata
@@ -320,8 +321,10 @@ def save_enhancement(image_id:int,body:EnhancementSettings,db:Session=Depends(ge
 @app.post("/api/images/{image_id}/enhancement/preview")
 def enhancement_preview(image_id:int,body:EnhancementRequest,db:Session=Depends(get_db)):
     rgb,matrix,valid=enhancement_source(image_id,body.analysis_id,db)
+    image=db.get(ThermalImage,image_id)
+    luts=official_palette_luts(settings.storage_root/image.storage_name,settings.dji_irp_path) if image else None
     try:
-        return render_enhancement(rgb,body.settings,matrix,valid)
+        return render_enhancement(rgb,body.settings,matrix,valid,luts)
     except ValueError as exc:
         fail(422,"enhancement_unavailable",str(exc))
 
@@ -357,7 +360,8 @@ def export_material(image_id:int,body:ExportWorkspace,db:Session):
     if latest: matrix,valid=load_matrix(latest)
     rgb,_,_=enhancement_source(image_id,None,db)
     regions=[region_dict(r) for r in db.scalars(select(Region).where(Region.analysis_id==latest.id)).all()] if latest else []
-    try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None)
+    luts=official_palette_luts(original,settings.dji_irp_path)
+    try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None,luts)
     except ValueError as exc: fail(422,"export_unavailable",str(exc))
     return image,latest,original,regions,report
 

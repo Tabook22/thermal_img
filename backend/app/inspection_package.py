@@ -81,8 +81,9 @@ def render_report_png(
     workspace: ExportWorkspace,
     regions: list[dict],
     analysis_stats: dict | None,
+    official_luts: dict[str, np.ndarray] | None = None,
 ) -> bytes:
-    rendered = render_enhancement(rgb, workspace.enhancement, matrix, valid)
+    rendered = render_enhancement(rgb, workspace.enhancement, matrix, valid, official_luts)
     encoded = rendered["preview"].split(",", 1)[-1]
     image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGBA")
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))

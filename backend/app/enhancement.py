@@ -10,9 +10,17 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .insulator_focus import InsulatorFocus, enhance_insulator
 
 
+DJI_PALETTES = ("white_hot", "fulgurite", "iron_red", "hot_iron", "medical", "arctic",
+                "rainbow1", "rainbow2", "tint", "black_hot")
+PaletteName = Literal["original", "white_hot", "fulgurite", "iron_red", "hot_iron", "medical",
+                      "arctic", "rainbow1", "rainbow2", "tint", "black_hot",
+                      "iron", "inferno", "gray"]
+
+
 class EnhancementSettings(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
-    palette: Literal["original", "iron", "inferno", "arctic", "gray"] = "original"
+    # Legacy iron/inferno/gray values remain readable for saved inspections.
+    palette: PaletteName = "original"
     low: float | None = None
     high: float | None = None
     brightness: float = Field(default=0, ge=-50, le=50)
@@ -45,14 +53,30 @@ class EnhancementSettings(BaseModel):
         return self
 
 
-def palette_rgb(gray: np.ndarray, name: str) -> np.ndarray:
-    if name == "gray":
-        return cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
-    if name == "inferno":
-        return cv2.cvtColor(cv2.applyColorMap(gray, cv2.COLORMAP_INFERNO), cv2.COLOR_BGR2RGB)
-    stops = ([(0, 0, 18), (33, 7, 82), (127, 16, 105), (221, 56, 50), (252, 157, 35), (255, 255, 224)]
-             if name == "iron" else [(4, 16, 49), (17, 72, 137), (24, 150, 184), (129, 220, 213), (249, 243, 164), (255, 255, 255)])
-    lut = np.stack([np.interp(np.linspace(0, 1, 256), np.linspace(0, 1, len(stops)), np.array(stops)[:, c]) for c in range(3)], axis=1).astype(np.uint8)
+PALETTE_STOPS: dict[str, list[tuple[int, int, int]]] = {
+    # Low temperature to high temperature. Names and order follow dirp_pseudo_color_e.
+    "white_hot": [(0, 0, 0), (255, 255, 255)],
+    "black_hot": [(255, 255, 255), (0, 0, 0)],
+    "fulgurite": [(24, 0, 8), (92, 0, 9), (198, 17, 5), (255, 112, 0), (255, 238, 18), (255, 255, 255)],
+    "iron_red": [(0, 0, 14), (31, 4, 68), (105, 9, 104), (188, 25, 62), (246, 92, 19), (255, 210, 52), (255, 255, 226)],
+    "hot_iron": [(0, 10, 10), (0, 55, 42), (0, 135, 92), (237, 218, 13), (244, 54, 7), (255, 255, 255)],
+    "medical": [(4, 0, 35), (37, 0, 119), (0, 98, 255), (0, 224, 192), (104, 255, 0), (255, 233, 0), (255, 32, 20), (255, 0, 188), (255, 255, 255)],
+    "arctic": [(0, 6, 40), (0, 47, 173), (0, 197, 255), (102, 255, 255), (255, 255, 255), (255, 231, 0), (255, 49, 0)],
+    "rainbow1": [(0, 0, 40), (37, 0, 163), (0, 94, 255), (0, 218, 255), (0, 245, 80), (245, 255, 0), (255, 90, 0), (255, 0, 87), (255, 255, 255)],
+    "rainbow2": [(0, 0, 255), (0, 190, 255), (0, 255, 48), (255, 255, 0), (255, 0, 0)],
+    "tint": [(0, 0, 0), (100, 100, 100), (214, 214, 214), (255, 255, 255), (255, 210, 210), (255, 40, 23)],
+}
+LEGACY_PALETTES = {"gray": "white_hot", "iron": "iron_red", "inferno": "fulgurite"}
+
+
+def palette_rgb(gray: np.ndarray, name: str, official_luts: dict[str, np.ndarray] | None = None) -> np.ndarray:
+    name = LEGACY_PALETTES.get(name, name)
+    if official_luts is not None and name in official_luts:
+        lut = official_luts[name]
+    else:
+        stops = PALETTE_STOPS[name]
+        positions = np.linspace(0, 1, len(stops))
+        lut = np.stack([np.interp(np.linspace(0, 1, 256), positions, np.array(stops)[:, c]) for c in range(3)], axis=1).astype(np.uint8)
     return lut[gray]
 
 
@@ -68,7 +92,8 @@ def global_adjust(rgb: np.ndarray, s: EnhancementSettings) -> np.ndarray:
     return np.rint(np.clip(cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB), 0, 1) * 255).astype(np.uint8)
 
 
-def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, valid=None) -> dict:
+def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, valid=None,
+                       official_luts: dict[str, np.ndarray] | None = None) -> dict:
     has_matrix = matrix is not None and valid is not None
     mask = (valid & np.isfinite(matrix)) if has_matrix else None
     if has_matrix and not mask.any():
@@ -82,7 +107,7 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
         high = s.high if s.high is not None else float(matrix[mask].max())
         high = max(high, low + .01)
         normalized = np.clip((np.where(mask, matrix, low) - low) / (high - low), 0, 1)
-        result = palette_rgb(np.rint(normalized * 255).astype(np.uint8), s.palette)
+        result = palette_rgb(np.rint(normalized * 255).astype(np.uint8), s.palette, official_luts)
         result[~mask] = 0
         result = cv2.resize(result, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST)
     if s.denoise:
@@ -113,7 +138,7 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
     legend = []
     if s.palette != "original":
         ramp = np.arange(256, dtype=np.uint8)[None, :]
-        colors = global_adjust(palette_rgb(ramp, s.palette), s)[0]
+        colors = global_adjust(palette_rgb(ramp, s.palette, official_luts), s)[0]
         legend = ["#%02x%02x%02x" % tuple(int(c) for c in colors[i]) for i in range(0, 256, 17)]
     return {"preview": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
             "low": low, "high": high, "legend": legend,
@@ -129,7 +154,7 @@ def auto_settings(rgb: np.ndarray, matrix=None, valid=None) -> EnhancementSettin
             raise ValueError("No valid temperature pixels are available")
         # Preserve rare hot pixels in the display span rather than clipping faults.
         low, high = float(np.percentile(values, .5)), float(values.max())
-        return EnhancementSettings(palette="inferno", low=float(low), high=float(max(high, low + .1)), **options)
+        return EnhancementSettings(palette="iron_red", low=float(low), high=float(max(high, low + .1)), **options)
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     p5, p95 = np.percentile(gray, [5, 95])
     return EnhancementSettings(contrast=float(np.clip(180 / max(p95 - p5, 1), 1, 1.5)),

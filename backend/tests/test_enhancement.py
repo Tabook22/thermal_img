@@ -25,7 +25,8 @@ def test_default_render_is_pixel_identical_and_does_not_modify_input():
     assert np.array_equal(rgb, original)
 
 
-@pytest.mark.parametrize("palette", ["iron", "inferno", "arctic", "gray"])
+@pytest.mark.parametrize("palette", ["white_hot", "fulgurite", "iron_red", "hot_iron", "medical",
+                                     "arctic", "rainbow1", "rainbow2", "tint", "black_hot"])
 def test_all_enhancements_preserve_temperature_values_and_coordinates(palette):
     matrix = np.linspace(20, 60, 1280, dtype=np.float32).reshape(32, 40)
     matrix[0, 0] = np.nan
@@ -51,7 +52,7 @@ def test_all_enhancements_preserve_temperature_values_and_coordinates(palette):
 def test_linear_temperature_palette_has_correct_legend_endpoints():
     matrix = np.array([[20, 30, 40]], dtype=np.float32)
     result = render_enhancement(np.zeros((1, 3, 3), np.uint8),
-                                EnhancementSettings(palette="gray", low=20, high=40),
+                                EnhancementSettings(palette="white_hot", low=20, high=40),
                                 matrix, np.ones_like(matrix, dtype=bool))
     assert result["quantitative_legend"]
     assert result["legend"][0] == "#000000" and result["legend"][-1] == "#ffffff"
@@ -63,6 +64,16 @@ def test_selective_desaturation_removes_blue_but_preserves_red():
     result = decode(render_enhancement(rgb, EnhancementSettings(blue=0)))
     assert result[0, 0, 0] == result[0, 0, 1] == result[0, 0, 2]
     assert np.array_equal(result[0, 1], rgb[0, 1])
+
+
+def test_dji_palette_endpoints_and_legacy_names_remain_supported():
+    ramp = np.array([[0, 255]], dtype=np.uint8)
+    from app.enhancement import palette_rgb
+    assert np.array_equal(palette_rgb(ramp, "white_hot")[0, 0], [0, 0, 0])
+    assert np.array_equal(palette_rgb(ramp, "black_hot")[0, 0], [255, 255, 255])
+    assert np.array_equal(palette_rgb(ramp, "gray"), palette_rgb(ramp, "white_hot"))
+    assert np.array_equal(palette_rgb(ramp, "iron"), palette_rgb(ramp, "iron_red"))
+    assert np.array_equal(palette_rgb(ramp, "inferno"), palette_rgb(ramp, "fulgurite"))
 
 
 def test_highlight_dims_only_pixels_outside_band():

@@ -1,11 +1,26 @@
 import {useEffect,useLayoutEffect,useRef,useState,type PointerEvent as ReactPointerEvent} from 'react';
 import {createPortal} from 'react-dom';
-import {Check,Eye,RotateCcw,Save,SlidersHorizontal,Sparkles,Redo2,Undo2,X} from 'lucide-react';
+import {Check,ChevronDown,Eye,RotateCcw,Save,SlidersHorizontal,Sparkles,Redo2,Undo2,X} from 'lucide-react';
 import {api,type Analysis} from './api';
 import './image-enhancement.css';
 import {InsulatorFocusControls,type InsulatorFocus,type FocusRegion} from './InsulatorFocus';
 
-type Palette='original'|'iron'|'inferno'|'arctic'|'gray';
+type Palette='original'|'white_hot'|'fulgurite'|'iron_red'|'hot_iron'|'medical'|'arctic'|'rainbow1'|'rainbow2'|'tint'|'black_hot';
+type StoredPalette=Palette|'iron'|'inferno'|'gray';
+const paletteDefinitions:{id:Palette;name:string;description:string;gradient:string}[]=[
+ {id:'original',name:'Original image colors',description:'Keep the palette embedded in the source image.',gradient:'linear-gradient(#fff1a6,#ff5d20,#a51770,#21104f)'},
+ {id:'white_hot',name:'White Hot',description:'Dark cool areas and bright hot targets.',gradient:'linear-gradient(#fff,#000)'},
+ {id:'fulgurite',name:'Fulgurite',description:'Warm progression from dark red to white.',gradient:'linear-gradient(#fff,#ffe817,#ff7000,#bd1004,#180008)'},
+ {id:'iron_red',name:'Iron Red',description:'Detailed thermal differences with familiar warm tones.',gradient:'linear-gradient(#ffffe2,#ffd234,#f45c13,#b91943,#690968,#00000e)'},
+ {id:'hot_iron',name:'Hot Iron',description:'Strong hot target recognition with cool detail.',gradient:'linear-gradient(#fff,#f43607,#edde0d,#00875c,#000a0a)'},
+ {id:'medical',name:'Medical',description:'Many colors reveal small temperature differences.',gradient:'linear-gradient(#fff,#ff00bc,#ff2014,#ffe900,#68ff00,#00e0c0,#0062ff,#250077,#040023)'},
+ {id:'arctic',name:'Arctic',description:'Cool blues separate from yellow and red heat.',gradient:'linear-gradient(#ff3100,#ffe700,#fff,#66ffff,#00c5ff,#002fad,#000628)'},
+ {id:'rainbow1',name:'Rainbow 1',description:'More cool-color detail for hot outdoor targets.',gradient:'linear-gradient(#fff,#ff0057,#ff5a00,#f5ff00,#00f550,#00daff,#005eff,#2500a3,#000028)'},
+ {id:'rainbow2',name:'Rainbow 2',description:'Balanced warm and cool target detail.',gradient:'linear-gradient(#f00,#ff0,#00ff30,#00beff,#00f)'},
+ {id:'tint',name:'Tint',description:'Grayscale scene with high temperatures emphasized red.',gradient:'linear-gradient(#ff2817,#ffd2d2,#fff,#d6d6d6,#646464,#000)'},
+ {id:'black_hot',name:'Black Hot',description:'Bright cool areas and dark hot targets.',gradient:'linear-gradient(#000,#fff)'},
+];
+const normalizePalette=(palette:StoredPalette):Palette=>palette==='gray'?'white_hot':palette==='iron'?'iron_red':palette==='inferno'?'fulgurite':palette;
 export type EnhancementSettings={palette:Palette;low:number|null;high:number|null;brightness:number;contrast:number;gamma:number;saturation:number;local_contrast:number;denoise:number;sharpen:number;red:number;yellow:number;green:number;cyan:number;blue:number;purple:number;highlight:boolean;highlight_low:number|null;highlight_high:number|null;focus:InsulatorFocus|null};
 const defaults:EnhancementSettings={palette:'original',low:null,high:null,brightness:0,contrast:1,gamma:1,saturation:1,local_contrast:0,denoise:0,sharpen:0,red:1,yellow:1,green:1,cyan:1,blue:1,purple:1,highlight:false,highlight_low:null,highlight_high:null,focus:null};
 type Preview={preview:string;low:number|null;high:number|null;legend:string[];quantitative_legend:boolean;width:number;height:number;focus_info:{warning:string|null;bounds:number[];pixels:number}|null};
@@ -33,7 +48,7 @@ export function useImageEnhancement(image:ImageInput|undefined,analysis:Analysis
   setSelectingFocus(false);setFocusCompare(false);setReadyId(undefined);setRendered(null);setComparison(false);setShowOriginal(false);setSettings(defaults);settingsRef.current=defaults;setSavedKey(key(defaults));setError('');setBusy(false);setProcessing(false);history.current=[];future.current=[];setRedoCount(0);grouping.current=false;setUndoCount(0);
   if(!image)return;
   const controller=new AbortController();
-  api<EnhancementSettings>(`/api/images/${image.id}/enhancement`,{signal:controller.signal}).then(value=>{if(controller.signal.aborted)return;const loaded={...defaults,...value};settingsRef.current=loaded;setSettings(loaded);setSavedKey(key(loaded));setReadyId(image.id)}).catch(cause=>{if(!controller.signal.aborted)setError(cause.message)});
+  api<EnhancementSettings & {palette:StoredPalette}>(`/api/images/${image.id}/enhancement`,{signal:controller.signal}).then(value=>{if(controller.signal.aborted)return;const loaded={...defaults,...value,palette:normalizePalette(value.palette)};settingsRef.current=loaded;setSettings(loaded);setSavedKey(key(loaded));setReadyId(image.id)}).catch(cause=>{if(!controller.signal.aborted)setError(cause.message)});
   return()=>controller.abort();
  },[image?.id,loadAttempt]);
  useEffect(()=>{
@@ -75,7 +90,7 @@ export function EnhancementPanel({control:c,regions=[]}:{control:EnhancementCont
   <p className="enhanceHint">Auto adjusts contrast and detail locally on this computer.</p>
   <fieldset disabled={!c.ready||c.busy} className="enhanceBody">
    <InsulatorFocusControls control={c} regions={regions}/>
-   <label className="enhanceSelect">Palette<select value={s.palette} onChange={e=>c.change({palette:e.target.value as Palette})}><option value="original">Original image colors</option><option disabled={!thermal} value="iron">Iron</option><option disabled={!thermal} value="inferno">Inferno</option><option disabled={!thermal} value="arctic">Arctic</option><option disabled={!thermal} value="gray">Grayscale</option></select></label>
+   <div className="paletteField"><span className="enhanceSectionLabel">DJI thermal palette</span><details className="palettePicker"><summary><i className="paletteSwatch" style={{background:paletteDefinitions.find(item=>item.id===s.palette)?.gradient}}/><span><b>{paletteDefinitions.find(item=>item.id===s.palette)?.name}</b><small>{s.palette==='original'?'Source appearance':'DJI compatible display palette'}</small></span><ChevronDown/></summary><div className="paletteMenu" role="listbox" aria-label="DJI thermal palettes">{paletteDefinitions.map(item=><button key={item.id} type="button" role="option" aria-selected={s.palette===item.id} disabled={item.id!=='original'&&!thermal} onClick={event=>{c.change({palette:item.id});event.currentTarget.closest('details')?.removeAttribute('open')}}><i className="paletteSwatch" style={{background:item.gradient}}/><span><b>{item.name}</b><small>{item.description}</small></span>{s.palette===item.id&&<Check/>}</button>)}</div></details><p className="enhanceHint">Palette names and ordering follow DJI Thermal SDK. Colors map linearly from the displayed low temperature to high temperature.</p></div>
    {!thermal&&<p className="enhanceHint">Complete a radiometric analysis to enable temperature palettes and highlighting.</p>}
    {thermal&&<div className="enhanceRange"><div className="enhanceSectionLabel">Display temperature range <span>°C</span></div><p className="enhanceHint">Choose a thermal palette to adjust its temperature scale.</p><div><label>Low<input aria-label="Display minimum temperature" type="number" step="0.1" disabled={s.palette==='original'} value={Number(low.toFixed(2))} onFocus={c.beginGesture} onBlur={c.endGesture} onChange={e=>{if(e.target.value)c.change({low:Math.min(high-.01,Number(e.target.value)),high})}}/></label><label>High<input aria-label="Display maximum temperature" type="number" step="0.1" disabled={s.palette==='original'} value={Number(high.toFixed(2))} onFocus={c.beginGesture} onBlur={c.endGesture} onChange={e=>{if(e.target.value)c.change({low,high:Math.max(low+.01,Number(e.target.value))})}}/></label><button type="button" disabled={s.palette==='original'} onClick={()=>c.change({low:null,high:null})}>Full range</button></div></div>}
    <details open><summary>Light & contrast</summary>{slider('Brightness','brightness',-50,50,1,'')}{slider('Contrast','contrast',.5,2,.01)}{slider('Midtones (gamma)','gamma',.4,2.5,.01,'×')}{slider('Color saturation','saturation',0,2,.01)}</details>
