@@ -104,7 +104,7 @@ for attempt in $(seq 1 45); do
     fi
     sleep 2
 done
-curl --fail --silent http://127.0.0.1:8003/api/health > /tmp/thermal-health.json
+health_json=$(curl --fail --silent http://127.0.0.1:8003/api/health)
 curl --fail --silent --output /dev/null http://127.0.0.1:5174/thermal/
 
 echo '[6/8] Backing up and extending the existing Nginx site'
@@ -145,5 +145,5 @@ echo '[7/8] Verifying existing and thermal applications'
 echo '[8/8] Deployment complete'
 echo "Commit: $(git rev-parse HEAD)"
 echo "Nginx backup: $backup"
-echo "Internal health: $(cat /tmp/thermal-health.json)"
+echo "Internal health: $health_json"
 echo 'Sign out and reconnect once before running Docker as nasser; group membership was added.'
