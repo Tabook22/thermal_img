@@ -41,6 +41,7 @@ class ExportNote(ImageNoteInput):
 
 class ExportWorkspace(BaseModel):
     enhancement: EnhancementSettings = Field(default_factory=EnhancementSettings)
+    insulator_label: Literal["inner", "outer"] | None = None
     probes: list[ExportProbe] = Field(default_factory=list, max_length=500)
     drawings: list[ExportDrawing] = Field(default_factory=list, max_length=500)
     notes: list[ExportNote] = Field(default_factory=list, max_length=500)
@@ -93,6 +94,25 @@ def render_report_png(
     sx, sy = width / native_w, height / native_h
     font = _font(max(12, round(width / 65)))
     small = _font(max(10, round(width / 80)))
+
+    if workspace.insulator_label:
+        label = workspace.insulator_label.title()
+        badge_font = _font(max(15, round(width / 38)))
+        text_box = draw.textbbox((0, 0), label, font=badge_font)
+        text_width = text_box[2] - text_box[0]
+        pad = max(9, round(width / 90)); icon_width = max(18, round(width / 34))
+        badge_width = text_width + icon_width + pad * 3
+        badge_height = max(42, round(width / 12))
+        right = width - max(10, round(width / 80)); left = right - badge_width
+        top = max(10, round(width / 80)); bottom = top + badge_height
+        draw.rounded_rectangle((left, top, right, bottom), radius=max(5, round(width / 160)), fill=(8, 16, 24, 210), outline="white", width=max(2, round(width / 420)))
+        cx = left + pad + icon_width / 2
+        draw.line((cx, top + 8, cx, bottom - 8), fill="#e8eef0", width=max(2, round(width / 420)))
+        disc_width = icon_width * .78
+        for index in range(7):
+            cy = top + 11 + index * (badge_height - 22) / 6
+            draw.ellipse((cx-disc_width/2, cy-2, cx+disc_width/2, cy+2), fill="#cbd4d8", outline="#ffffff")
+        draw.text((left + pad * 2 + icon_width, (top + bottom) / 2), label, font=badge_font, fill="white", anchor="lm")
 
     def pixel(point: dict) -> tuple[float, float]:
         return ((float(point["x"]) + .5) * sx, (float(point["y"]) + .5) * sy)

@@ -41,7 +41,7 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
             analysis = AnalysisVersion(image_id=image.id, version=1, status="completed", sdk_version="test", matrix_path="matrices/source.npz", width=32, height=24, parameters_json={}, parameters_provenance={}, stats_json={"minimum_c":20.0,"maximum_c":45.0,"mean_c":32.5,"valid_pixels":768,"minimum_location":{"x":0,"y":0},"maximum_location":{"x":31,"y":23}}, warnings_json=[])
             db.add(analysis); db.flush()
             db.add(Region(analysis_id=analysis.id,name="Insulator",kind="rectangle",geometry_json={"points":[{"x":2,"y":2},{"x":20,"y":20}],"minimum_selection":None},stats_json=analysis.stats_json,is_reference=False)); db.commit()
-            workspace = ExportWorkspace(probes=[{"x":10,"y":10,"temperature_c":30.0}], notes=[{"id":"note-1","text":"Inspect","x":.1,"y":.1}])
+            workspace = ExportWorkspace(insulator_label="inner", probes=[{"x":10,"y":10,"temperature_c":30.0}], notes=[{"id":"note-1","text":"Inspect","x":.1,"y":.1}])
             response = export_editable_package(image.id, workspace, db)
             package_path = Path(response.path)
             with ZipFile(package_path) as archive:
@@ -58,6 +58,7 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
             assert restored_image.sha256 == digest
             assert (tmp_path / restored_image.storage_name).read_bytes() == original.read_bytes()
             assert restored_image.metadata_json["workspace"]["probes"][0]["temperature_c"] == 30.0
+            assert restored_image.metadata_json["workspace"]["insulator_label"] == "inner"
             restored_analysis = db.scalar(select(AnalysisVersion).where(AnalysisVersion.image_id == restored_image.id))
             with np.load(tmp_path / restored_analysis.matrix_path) as saved:
                 np.testing.assert_array_equal(saved["temperatures"], temperatures)

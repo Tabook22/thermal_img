@@ -13,3 +13,15 @@
 .lineTemperatureAverage{position:absolute;transform:translate(8px,8px);padding:4px 7px;border:1px solid #fff36a;background:#091217e8;color:#fff36a;border-radius:3px;font-size:10px;white-space:nowrap;pointer-events:none;box-shadow:0 2px 8px #0008}
 .lineTemperatureAverage b{color:#fff;margin-left:4px}
 .draftLine{z-index:8}.draftLine line{stroke-dasharray:6 4;stroke:#ff8a43}
+
+/* Inner and outer insulator classification */
+.insulatorToolIcon{position:relative;width:24px;height:30px;display:inline-flex;align-items:center;justify-content:flex-start}
+.insulatorToolIcon svg{width:13px!important;height:27px!important;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.insulatorToolIcon b{position:absolute;right:0;bottom:1px;min-width:12px;height:12px;border-radius:6px;background:#263b44;color:#fff;font-size:8px;line-height:12px;text-align:center}
+.tool.active .insulatorToolIcon b{background:#f06a2b}
+.insulatorTypeBadge{position:absolute;z-index:8;top:12px;right:12px;min-width:128px;height:58px;padding:7px 13px 7px 9px;display:flex;align-items:center;justify-content:center;gap:9px;border:2px solid rgba(255,255,255,.92);border-radius:3px;background:rgba(7,16,21,.72);box-shadow:0 3px 14px rgba(0,0,0,.4);color:#fff;pointer-events:none;text-shadow:0 1px 3px #000}
+.insulatorTypeBadge svg{width:21px;height:43px;fill:none;stroke:#f4f7f8;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #000)}
+.insulatorTypeBadge .insulatorStem{stroke-width:1.2}.insulatorTypeBadge .insulatorBase{stroke-width:2}
+.insulatorTypeBadge strong{font-size:24px;font-weight:600;letter-spacing:.2px;text-transform:capitalize}
+.insulatorTypeBadge.inner{border-color:#f1f7fa}.insulatorTypeBadge.outer{border-color:#ffd6bd}
+@media(max-width:1100px){.insulatorTypeBadge{min-width:104px;height:48px;top:8px;right:8px;padding:5px 9px;gap:7px}.insulatorTypeBadge svg{width:17px;height:35px}.insulatorTypeBadge strong{font-size:19px}}
