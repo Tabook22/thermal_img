@@ -52,11 +52,15 @@ chown nasser:nasser .env
 chmod 600 .env
 
 echo '[4/8] Creating temporary web access protection'
-read -r -p 'Temporary /thermal/ username [nasser]: ' auth_user
-auth_user=${auth_user:-nasser}
-[[ "$auth_user" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo 'Invalid username.' >&2; exit 1; }
-echo 'Enter the temporary website password twice. It will not be displayed.'
-htpasswd -c "$AUTH_FILE" "$auth_user"
+if [[ -f "$AUTH_FILE" ]]; then
+    echo 'Preserving the existing protected website login file.'
+else
+    read -r -p 'Temporary /thermal/ username [nasser]: ' auth_user
+    auth_user=${auth_user:-nasser}
+    [[ "$auth_user" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo 'Invalid username.' >&2; exit 1; }
+    echo 'Enter the temporary website password twice. It will not be displayed.'
+    htpasswd -c "$AUTH_FILE" "$auth_user"
+fi
 chown root:www-data "$AUTH_FILE"
 chmod 640 "$AUTH_FILE"
 
