@@ -1,0 +1,12 @@
+services:
+  api:
+    environment:
+      DJI_SDK_VERSION: ${DJI_SDK_VERSION:-1.8}
+      LD_LIBRARY_PATH: /opt/dji-thermal-sdk/utility/bin/linux/release_x64
+    volumes:
+      - type: bind
+        source: /opt/dji-thermal-sdk
+        target: /opt/dji-thermal-sdk
+        read_only: true
+        bind:
+          create_host_path: false

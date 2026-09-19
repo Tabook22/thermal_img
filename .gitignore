@@ -16,3 +16,4 @@ backend/thermal.db
 .local-sdk/
 *.pyc
 backend/enhancement-server.*.log
+backups/

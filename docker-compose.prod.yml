@@ -1,0 +1,73 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:?Set MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL}
+      STORAGE_ROOT: /data
+      DJI_IRP_PATH: /opt/dji-thermal-sdk/utility/bin/linux/release_x64/dji_irp
+      DJI_SDK_VERSION: ${DJI_SDK_VERSION:-unavailable}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      DECODER_TIMEOUT_SECONDS: ${DECODER_TIMEOUT_SECONDS:-45}
+      DECODER_CONCURRENCY: ${DECODER_CONCURRENCY:-2}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://skygreenline-lab.io}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_WEB_MODEL: ${OPENAI_WEB_MODEL:-gpt-4.1-mini}
+    ports:
+      - "127.0.0.1:8003:8000"
+    volumes:
+      - thermal_data:/data
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_BASE_PATH: /thermal/
+    ports:
+      - "127.0.0.1:5174:8080"
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/thermal/"]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  mysql_data:
+  thermal_data:
