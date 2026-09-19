@@ -31,6 +31,12 @@ class MarkerVisibility(BaseModel):
     minimum: bool = True
 
 
+class GuideOverlay(BaseModel):
+    x: float = Field(0.62, ge=0, le=1)
+    y: float = Field(0.08, ge=0, le=1)
+    width: float = Field(0.3, ge=0.08, le=0.8)
+
+
 class ExportDrawing(ImageDrawingInput):
     id: str = Field(max_length=64)
 
@@ -45,6 +51,7 @@ class ExportWorkspace(BaseModel):
     insulator_label_x: float = Field(0.81, ge=0, le=1)
     insulator_label_y: float = Field(0.025, ge=0, le=1)
     insulator_label_width: float = Field(0.17, ge=0.06, le=0.55)
+    guide_overlay: GuideOverlay | None = None
     probes: list[ExportProbe] = Field(default_factory=list, max_length=500)
     drawings: list[ExportDrawing] = Field(default_factory=list, max_length=500)
     notes: list[ExportNote] = Field(default_factory=list, max_length=500)
@@ -86,6 +93,7 @@ def render_report_png(
     regions: list[dict],
     analysis_stats: dict | None,
     official_luts: dict[str, np.ndarray] | None = None,
+    guide_image: Image.Image | None = None,
 ) -> bytes:
     rendered = render_enhancement(rgb, workspace.enhancement, matrix, valid, official_luts)
     encoded = rendered["preview"].split(",", 1)[-1]
@@ -97,6 +105,19 @@ def render_report_png(
     sx, sy = width / native_w, height / native_h
     font = _font(max(12, round(width / 65)))
     small = _font(max(10, round(width / 80)))
+
+    if workspace.guide_overlay and guide_image is not None:
+        guide = guide_image.convert("RGBA")
+        guide_width = max(24, round(width * workspace.guide_overlay.width))
+        guide_height = max(16, round(guide.height * guide_width / max(1, guide.width)))
+        if guide_height > height:
+            guide_height = height
+            guide_width = max(1, round(guide.width * guide_height / max(1, guide.height)))
+        left = min(width - guide_width, round(width * workspace.guide_overlay.x))
+        top = min(height - guide_height, round(height * workspace.guide_overlay.y))
+        guide.thumbnail((guide_width, guide_height), Image.Resampling.LANCZOS)
+        overlay.alpha_composite(guide, (left, top))
+        draw.rectangle((left, top, left + guide.width, top + guide.height), outline="white", width=max(1, round(width / 500)))
 
     if workspace.insulator_label:
         label = workspace.insulator_label.title()
@@ -226,12 +247,14 @@ def validate_archive(archive: ZipFile, max_uncompressed: int = 750 * 1024 * 1024
     return manifest
 
 
-def write_package(path: Path, manifest: dict, original: Path, report: bytes, matrix_path: Path | None) -> None:
+def write_package(path: Path, manifest: dict, original: Path, report: bytes, matrix_path: Path | None, guide_path: Path | None = None) -> None:
     files = manifest["files"]
     with ZipFile(path, "w", compression=ZIP_DEFLATED, compresslevel=6) as archive:
         archive.write(original, files["original"])
         archive.writestr(files["report"], report)
         if matrix_path is not None and files.get("matrix"):
             archive.write(matrix_path, files["matrix"])
+        if guide_path is not None and files.get("guide"):
+            archive.write(guide_path, files["guide"])
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         archive.writestr("README.txt", "This package preserves the untouched source image, calibrated temperature matrix, annotations, regions, and enhancement settings. Re-open the .thermalpkg file in Tower Thermal Inspector. report.png is a flattened visual for reports and is not a radiometric source file.\n")

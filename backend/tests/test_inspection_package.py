@@ -28,6 +28,8 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
             path.parent.mkdir(parents=True, exist_ok=True)
         pixels = np.zeros((24, 32, 3), dtype=np.uint8); pixels[:, :, 0] = 90
         Image.fromarray(pixels).save(original); Image.fromarray(pixels).save(preview)
+        guide = tmp_path / "guides/reference.png"; guide.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.full((10, 16, 3), 180, dtype=np.uint8)).save(guide)
         temperatures = np.linspace(20, 45, 24 * 32, dtype=np.float32).reshape(24, 32)
         valid = np.ones_like(temperatures, dtype=bool)
         np.savez_compressed(matrix_path, temperatures=temperatures, valid_mask=valid)
@@ -36,12 +38,12 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
         with Session(engine) as db:
             tower = Tower(tower_code="TEST"); db.add(tower); db.flush()
             first = Inspection(tower_id=tower.id); second = Inspection(tower_id=tower.id); db.add_all([first, second]); db.flush()
-            image = ThermalImage(inspection_id=first.id, original_name="source.jpg", storage_name="originals/source.jpg", sha256=digest, classification="supported_radiometric", metadata_json={"preview_path":"previews/source.jpg","source_preserved":True})
+            image = ThermalImage(inspection_id=first.id, original_name="source.jpg", storage_name="originals/source.jpg", sha256=digest, classification="supported_radiometric", metadata_json={"preview_path":"previews/source.jpg","source_preserved":True,"guide_image_path":"guides/reference.png"})
             db.add(image); db.flush()
             analysis = AnalysisVersion(image_id=image.id, version=1, status="completed", sdk_version="test", matrix_path="matrices/source.npz", width=32, height=24, parameters_json={}, parameters_provenance={}, stats_json={"minimum_c":20.0,"maximum_c":45.0,"mean_c":32.5,"valid_pixels":768,"minimum_location":{"x":0,"y":0},"maximum_location":{"x":31,"y":23}}, warnings_json=[])
             db.add(analysis); db.flush()
             db.add(Region(analysis_id=analysis.id,name="Insulator",kind="rectangle",geometry_json={"points":[{"x":2,"y":2},{"x":20,"y":20}],"minimum_selection":None},stats_json=analysis.stats_json,is_reference=False)); db.commit()
-            workspace = ExportWorkspace(insulator_label="inner", insulator_label_x=.35, insulator_label_y=.2, insulator_label_width=.3, probes=[{"x":10,"y":10,"temperature_c":30.0}], notes=[{"id":"note-1","text":"Inspect","x":.1,"y":.1}])
+            workspace = ExportWorkspace(insulator_label="inner", insulator_label_x=.35, insulator_label_y=.2, insulator_label_width=.3, guide_overlay={"x":.5,"y":.1,"width":.25}, probes=[{"x":10,"y":10,"temperature_c":30.0}], notes=[{"id":"note-1","text":"Inspect","x":.1,"y":.1}])
             response = export_editable_package(image.id, workspace, db)
             package_path = Path(response.path)
             with ZipFile(package_path) as archive:
@@ -51,6 +53,7 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
                     np.testing.assert_array_equal(saved["temperatures"], temperatures)
                     np.testing.assert_array_equal(saved["valid_mask"], valid)
                 assert archive.read(manifest["files"]["report"]).startswith(b"\x89PNG")
+                assert archive.read(manifest["files"]["guide"]).startswith(b"\x89PNG")
 
             with package_path.open("rb") as stream:
                 restored = asyncio.run(import_editable_package(second.id, UploadFile(file=stream, filename="saved.thermalpkg"), db))
@@ -61,6 +64,8 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
             assert restored_image.metadata_json["workspace"]["insulator_label"] == "inner"
             assert restored_image.metadata_json["workspace"]["insulator_label_x"] == .35
             assert restored_image.metadata_json["workspace"]["insulator_label_width"] == .3
+            assert restored_image.metadata_json["workspace"]["guide_overlay"]["width"] == .25
+            assert (tmp_path / restored_image.metadata_json["guide_image_path"]).is_file()
             restored_analysis = db.scalar(select(AnalysisVersion).where(AnalysisVersion.image_id == restored_image.id))
             with np.load(tmp_path / restored_analysis.matrix_path) as saved:
                 np.testing.assert_array_equal(saved["temperatures"], temperatures)

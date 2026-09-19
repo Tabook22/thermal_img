@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 import numpy as np
 import pymupdf
+from PIL import Image
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -361,7 +362,11 @@ def export_material(image_id:int,body:ExportWorkspace,db:Session):
     rgb,_,_=enhancement_source(image_id,None,db)
     regions=[region_dict(r) for r in db.scalars(select(Region).where(Region.analysis_id==latest.id)).all()] if latest else []
     luts=official_palette_luts(original,settings.dji_irp_path)
-    try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None,luts)
+    guide=None; guide_name=(image.metadata_json or {}).get("guide_image_path")
+    guide_path=settings.storage_root/guide_name if guide_name else None
+    if body.guide_overlay and guide_path and guide_path.is_file():
+        with Image.open(guide_path) as source: guide=source.convert("RGBA").copy()
+    try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None,luts,guide)
     except ValueError as exc: fail(422,"export_unavailable",str(exc))
     return image,latest,original,regions,report
 
@@ -377,16 +382,18 @@ def export_editable_package(image_id:int,body:ExportWorkspace,db:Session=Depends
     export_root=settings.storage_root/"exports"; export_root.mkdir(parents=True,exist_ok=True)
     target=export_root/f"{uuid.uuid4().hex}.thermalpkg"
     original_suffix=Path(image.original_name).suffix.lower() or original.suffix.lower() or ".jpg"
-    files={"original":f"source/original{original_suffix}","report":"report/report.png","matrix":"data/temperature-matrix.npz" if analysis else None}
+    guide_name=(image.metadata_json or {}).get("guide_image_path"); guide_path=settings.storage_root/guide_name if guide_name else None
+    has_guide=bool(body.guide_overlay and guide_path and guide_path.is_file())
+    files={"original":f"source/original{original_suffix}","report":"report/report.png","matrix":"data/temperature-matrix.npz" if analysis else None,"guide":"support/guide.png" if has_guide else None}
     metadata=dict(image.metadata_json or {})
-    for key in ("preview_path","enhancement","drawings","notes","workspace"): metadata.pop(key,None)
+    for key in ("preview_path","enhancement","drawings","notes","workspace","guide_image_path"): metadata.pop(key,None)
     manifest={
         "format":PACKAGE_FORMAT,"version":PACKAGE_VERSION,"created_at":datetime.utcnow().isoformat()+"Z",
         "source":{"original_name":image.original_name,"sha256":image.sha256,"classification":image.classification,"camera_model":image.camera_model,"camera_latitude":image.camera_latitude,"camera_longitude":image.camera_longitude,"metadata":metadata},
         "analysis":analysis_dict(analysis) if analysis else None,"regions":regions,"workspace":body.model_dump(),"files":files,
         "checksums":{"original_sha256":image.sha256,"report_sha256":hashlib.sha256(report).hexdigest(),"matrix_sha256":hashlib.sha256((settings.storage_root/analysis.matrix_path).read_bytes()).hexdigest() if analysis and analysis.matrix_path else None},
     }
-    try: write_package(target,manifest,original,report,settings.storage_root/analysis.matrix_path if analysis and analysis.matrix_path else None)
+    try: write_package(target,manifest,original,report,settings.storage_root/analysis.matrix_path if analysis and analysis.matrix_path else None,guide_path if has_guide else None)
     except Exception:
         target.unlink(missing_ok=True); raise
     filename=f"{safe_stem(image.original_name)}.thermalpkg"
@@ -397,6 +404,38 @@ def image_workspace(image_id:int,db:Session=Depends(get_db)):
     image=db.get(ThermalImage,image_id)
     if not image: fail(404,"image_not_found","Image not found")
     return ExportWorkspace.model_validate((image.metadata_json or {}).get("workspace",{}))
+
+@app.post("/api/images/{image_id}/guide-image",status_code=201)
+async def upload_guide_image(image_id:int,file:UploadFile=File(...),db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    content=await file.read(20*1024*1024+1)
+    if not content or len(content)>20*1024*1024: fail(413,"guide_image_too_large","Guide image must be 20 MB or smaller")
+    try:
+        with Image.open(io.BytesIO(content)) as source:
+            source.verify()
+        with Image.open(io.BytesIO(content)) as source:
+            source.thumbnail((4096,4096),Image.Resampling.LANCZOS)
+            converted=source.convert("RGBA") if source.mode in ("RGBA","LA") or "transparency" in source.info else source.convert("RGB")
+            guide_name=f"guides/{uuid.uuid4().hex}.png"; guide_path=settings.storage_root/guide_name; guide_path.parent.mkdir(parents=True,exist_ok=True)
+            converted.save(guide_path,"PNG",optimize=True)
+    except (OSError,ValueError):
+        fail(422,"invalid_guide_image","Choose a valid PNG, JPEG, WEBP, or TIFF image")
+    metadata=image.metadata_json or {}; previous=metadata.get("guide_image_path")
+    image.metadata_json={**metadata,"guide_image_path":guide_name};db.commit()
+    if previous and previous!=guide_name:
+        old=(settings.storage_root/previous).resolve()
+        guides=(settings.storage_root/"guides").resolve()
+        if guides in old.parents: old.unlink(missing_ok=True)
+    return {"url":f"/api/images/{image.id}/guide-image","name":Path(file.filename or "guide.png").name[:255]}
+
+@app.get("/api/images/{image_id}/guide-image")
+def get_guide_image(image_id:int,db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    name=(image.metadata_json or {}).get("guide_image_path"); path=settings.storage_root/name if name else None
+    if not path or not path.is_file(): fail(404,"guide_image_not_found","No guide image has been added")
+    return FileResponse(path,media_type="image/png",headers={"Cache-Control":"no-store"})
 
 @app.put("/api/images/{image_id}/workspace")
 def save_image_workspace(image_id:int,body:ExportWorkspace,db:Session=Depends(get_db)):
@@ -436,8 +475,15 @@ async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db
             sig=image_signature(original_path)
             if sig=="unknown": raise ValueError("Package original is not a supported image")
             preview_name=f"previews/{uuid.uuid4().hex}.jpg"; preview_path=settings.storage_root/preview_name; preview_path.parent.mkdir(parents=True,exist_ok=True); created_paths.append(preview_path); preview(original_path,preview_path)
+            guide_name=None; guide_member=files.get("guide")
+            if workspace.guide_overlay and guide_member:
+                guide_bytes=archive.read(guide_member)
+                if len(guide_bytes)>20*1024*1024: raise ValueError("Guide image exceeds the supported size")
+                with Image.open(io.BytesIO(guide_bytes)) as guide_source: guide_source.verify()
+                guide_name=f"guides/{uuid.uuid4().hex}.png"; guide_path=settings.storage_root/guide_name; guide_path.parent.mkdir(parents=True,exist_ok=True);created_paths.append(guide_path);guide_path.write_bytes(guide_bytes)
             metadata=source.get("metadata") if isinstance(source.get("metadata"),dict) else {}
             metadata={**metadata,"signature":sig,"preview_path":preview_name,"source_preserved":True,"imported_package":True,"enhancement":workspace.enhancement.model_dump(),"drawings":[x.model_dump() for x in workspace.drawings],"notes":[x.model_dump() for x in workspace.notes],"workspace":workspace.model_dump()}
+            if guide_name: metadata["guide_image_path"]=guide_name
             image=ThermalImage(inspection_id=inspection_id,original_name=original_name,storage_name=storage_name,sha256=digest.hexdigest(),classification=source.get("classification") or ("pending_decoder" if sig=="jpeg" else "ordinary_image"),camera_model=source.get("camera_model"),camera_latitude=source.get("camera_latitude"),camera_longitude=source.get("camera_longitude"),metadata_json=metadata)
             db.add(image); db.flush(); imported_analysis=None
             saved_analysis=manifest.get("analysis"); matrix_member=files.get("matrix")

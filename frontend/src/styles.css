@@ -25,3 +25,14 @@
 .insulatorTypeBadge strong{font-size:1em;font-weight:600;letter-spacing:.2px;text-transform:capitalize}
 .insulatorTypeBadge.inner{border-color:#f1f7fa}.insulatorTypeBadge.outer{border-color:#ffd6bd}
 .insulatorBadgeResize{display:none;position:absolute;right:-7px;bottom:-7px;width:15px;height:15px;border:2px solid #ff7b2b;border-radius:50%;background:#fff;box-shadow:0 1px 5px #000;cursor:nwse-resize;touch-action:none}.insulatorTypeBadge.selected>.insulatorBadgeResize{display:block}.insulatorTypeBadge.selected{outline:1px dashed #ff9a61;outline-offset:3px}@media(max-width:1100px){.insulatorBadgeResize{right:-6px;bottom:-6px;width:13px;height:13px}}
+
+/* Supporting guide image overlay */
+.guideImageOverlay{position:absolute;z-index:11;line-height:0;cursor:move;touch-action:none;user-select:none;filter:drop-shadow(0 4px 12px #0009)}
+.guideImageOverlay>img{display:block;width:100%;height:auto;max-width:none;max-height:none;filter:none;pointer-events:none;border:1px solid rgba(255,255,255,.75)}
+.guideImageOverlay.selected{outline:1px dashed #ff9a61;outline-offset:3px}
+.guideImageControls{display:none;position:absolute;right:3px;top:3px;gap:3px;line-height:normal}
+.guideImageOverlay.selected>.guideImageControls{display:flex}
+.guideImageControls button{width:25px;height:25px;padding:0;border:1px solid #d8e5e9;border-radius:4px;background:#09151ddd;color:#fff;font-size:18px;line-height:20px;cursor:pointer}
+.guideImageControls button:hover{background:#f06a2b}
+.guideImageResize{display:none;position:absolute;right:-7px;bottom:-7px;width:16px;height:16px;border:2px solid #ff7b2b;border-radius:50%;background:#fff;box-shadow:0 1px 5px #000;cursor:nwse-resize;touch-action:none}
+.guideImageOverlay.selected>.guideImageResize{display:block}
