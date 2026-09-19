@@ -22,8 +22,14 @@ existing_api=$(curl --fail --silent --output /dev/null --write-out '%{http_code}
     exit 1
 }
 [[ -f "$SITE_FILE" ]] || { echo "Expected Nginx site file is missing: $SITE_FILE" >&2; exit 1; }
-ss -ltn | grep -qE '127\.0\.0\.1:8003[[:space:]]' && { echo 'Port 8003 is already used.' >&2; exit 1; }
-ss -ltn | grep -qE '127\.0\.0\.1:5174[[:space:]]' && { echo 'Port 5174 is already used.' >&2; exit 1; }
+if ss -ltn | grep -qE '127\.0\.0\.1:8003[[:space:]]'; then
+    command -v docker >/dev/null && docker ps --format '{{.Names}}' | grep -qx thermal_inspector-api-1 \
+        || { echo 'Port 8003 is used by another service.' >&2; exit 1; }
+fi
+if ss -ltn | grep -qE '127\.0\.0\.1:5174[[:space:]]'; then
+    command -v docker >/dev/null && docker ps --format '{{.Names}}' | grep -qx thermal_inspector-web-1 \
+        || { echo 'Port 5174 is used by another service.' >&2; exit 1; }
+fi
 
 echo '[1/8] Installing Docker Compose and Basic Authentication utilities'
 apt-get update
