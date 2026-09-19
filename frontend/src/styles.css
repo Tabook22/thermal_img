@@ -24,4 +24,4 @@
 .insulatorTypeBadge .insulatorStem{stroke-width:1.2}.insulatorTypeBadge .insulatorBase{stroke-width:2}
 .insulatorTypeBadge strong{font-size:1em;font-weight:600;letter-spacing:.2px;text-transform:capitalize}
 .insulatorTypeBadge.inner{border-color:#f1f7fa}.insulatorTypeBadge.outer{border-color:#ffd6bd}
-.insulatorBadgeResize{position:absolute;right:-7px;bottom:-7px;width:15px;height:15px;border:2px solid #ff7b2b;border-radius:50%;background:#fff;box-shadow:0 1px 5px #000;cursor:nwse-resize;touch-action:none}.insulatorTypeBadge:hover,.insulatorTypeBadge:focus-within{outline:1px dashed #ff9a61;outline-offset:3px}@media(max-width:1100px){.insulatorBadgeResize{right:-6px;bottom:-6px;width:13px;height:13px}}
+.insulatorBadgeResize{display:none;position:absolute;right:-7px;bottom:-7px;width:15px;height:15px;border:2px solid #ff7b2b;border-radius:50%;background:#fff;box-shadow:0 1px 5px #000;cursor:nwse-resize;touch-action:none}.insulatorTypeBadge.selected>.insulatorBadgeResize{display:block}.insulatorTypeBadge.selected{outline:1px dashed #ff9a61;outline-offset:3px}@media(max-width:1100px){.insulatorBadgeResize{right:-6px;bottom:-6px;width:13px;height:13px}}
