@@ -1,6 +1,6 @@
 import {useEffect,useLayoutEffect,useRef,useState,type PointerEvent as ReactPointerEvent} from 'react';
 import {createPortal} from 'react-dom';
-import {Check,ChevronDown,Eye,RotateCcw,Save,SlidersHorizontal,Sparkles,Redo2,Undo2,X} from 'lucide-react';
+import {Check,ChevronDown,Eye,Info,RotateCcw,Save,SlidersHorizontal,Sparkles,Redo2,Undo2,X} from 'lucide-react';
 import {api,type Analysis} from './api';
 import './image-enhancement.css';
 import {InsulatorFocusControls,type InsulatorFocus,type FocusRegion} from './InsulatorFocus';
@@ -110,19 +110,22 @@ export function EnhancementLegend({control:c}:{control:EnhancementController}){
  const referenceOnly=c.showOriginal||c.settings.palette==='original'||!p?.legend.length;
  const colors=referenceOnly?originalColors:p!.legend;
  const calibrated=!referenceOnly&&p!.quantitative_legend;
+ const minimum=c.analysis?.statistics?.minimum_c,maximum=c.analysis?.statistics?.maximum_c;
  const legendRef=useRef<HTMLDivElement>(null);
  const [position,setPosition]=useState<{x:number;y:number}|null>(null);
  const drag=useRef<{id:number;clientX:number;clientY:number;x:number;y:number}|null>(null);
  useLayoutEffect(()=>{
   if(!c.originalSrc)return;
   const canvas=document.querySelector('.workspace .canvas')?.getBoundingClientRect();
-  const width=legendRef.current?.offsetWidth||48,height=legendRef.current?.offsetHeight||220;
+  const width=legendRef.current?.offsetWidth||126,height=legendRef.current?.offsetHeight||330;
   setPosition({x:Math.max(0,Math.min(window.innerWidth-width,canvas?canvas.right-width-18:window.innerWidth-width-18)),y:Math.max(0,Math.min(window.innerHeight-height,canvas?canvas.top+(canvas.height-height)/2:80))});
  },[c.originalSrc]);
  useEffect(()=>{const keepVisible=()=>setPosition(current=>current?{x:Math.max(0,Math.min(current.x,window.innerWidth-(legendRef.current?.offsetWidth||48))),y:Math.max(0,Math.min(current.y,window.innerHeight-(legendRef.current?.offsetHeight||220)))}:null);window.addEventListener('resize',keepVisible);return()=>window.removeEventListener('resize',keepVisible)},[]);
  if(!c.originalSrc)return null;
  const down=(e:ReactPointerEvent<HTMLDivElement>)=>{if(e.button!==0)return;e.preventDefault();e.stopPropagation();const rect=e.currentTarget.getBoundingClientRect();e.currentTarget.setPointerCapture(e.pointerId);drag.current={id:e.pointerId,clientX:e.clientX,clientY:e.clientY,x:rect.left,y:rect.top}};
- const move=(e:ReactPointerEvent<HTMLDivElement>)=>{const d=drag.current;if(d?.id!==e.pointerId)return;e.preventDefault();const width=legendRef.current?.offsetWidth||48,height=legendRef.current?.offsetHeight||220;setPosition({x:Math.max(0,Math.min(window.innerWidth-width,d.x+e.clientX-d.clientX)),y:Math.max(0,Math.min(window.innerHeight-height,d.y+e.clientY-d.clientY))})};
+ const move=(e:ReactPointerEvent<HTMLDivElement>)=>{const d=drag.current;if(d?.id!==e.pointerId)return;e.preventDefault();const width=legendRef.current?.offsetWidth||126,height=legendRef.current?.offsetHeight||330;setPosition({x:Math.max(0,Math.min(window.innerWidth-width,d.x+e.clientX-d.clientX)),y:Math.max(0,Math.min(window.innerHeight-height,d.y+e.clientY-d.clientY))})};
  const end=(e:ReactPointerEvent<HTMLDivElement>)=>{if(drag.current?.id===e.pointerId)drag.current=null};
- return createPortal(<div ref={legendRef} role="img" aria-label="Draggable thermal color legend" className="colorbar enhancementLegend" style={position?{left:position.x,top:position.y}:undefined} title={calibrated?'Drag the displayed temperature scale anywhere in the app window':'Drag the approximate color guide anywhere in the app window. Colors are not a measured temperature scale.'} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end}><span>{calibrated?`${p!.high?.toFixed(1)}°C`:'Warm'}</span><div style={{background:`linear-gradient(to top, ${colors.join(',')})`}}/><span>{calibrated?`${p!.low?.toFixed(1)}°C`:'Cool'}</span><small>{calibrated?'Display °C':'Color guide'}</small></div>,document.body);
+ const markerPosition=(value:number|null|undefined)=>value==null||p?.low==null||p?.high==null||value<p.low||value>p.high?null:Math.max(0,Math.min(100,100-(value-p.low)/(p.high-p.low)*100));
+ const maxPosition=calibrated?markerPosition(maximum):null,minPosition=calibrated?markerPosition(minimum):null;
+ return createPortal(<div ref={legendRef} role="img" aria-label="Draggable thermal color legend with maximum and minimum temperature markers" className={`colorbar enhancementLegend ${calibrated?'calibrated':''}`} style={position?{left:position.x,top:position.y}:undefined} title={calibrated?'Drag the temperature scale anywhere in the app window':'Drag the approximate color guide anywhere in the app window. Colors are not a measured temperature scale.'} onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>{calibrated?<><div className="legendLimit legendHigh">{p!.high!.toFixed(1)} <Info/></div><div className="legendRail"><div className="legendGradient" style={{background:`linear-gradient(to top, ${colors.join(',')})`}}/>{maxPosition!=null&&<div className="legendMarker maximum" style={{top:`${maxPosition}%`}}><span>{maximum!.toFixed(1)}°C</span><i><b/><b/><b/></i></div>}{minPosition!=null&&<div className="legendMarker minimum" style={{top:`${minPosition}%`}}><i><b/><b/><b/></i><span>{minimum!.toFixed(1)}°C</span></div>}</div><div className="legendLimit legendLow">{p!.low!.toFixed(1)}</div><small>Display °C · drag</small></>:<><span>Warm</span><div className="legendSimple" style={{background:`linear-gradient(to top, ${colors.join(',')})`}}/><span>Cool</span><small>Color guide · drag</small></>}</div>,document.body);
 }
