@@ -107,10 +107,9 @@ export function EnhancementPanel({control:c,regions=[]}:{control:EnhancementCont
 export function EnhancementLegend({control:c}:{control:EnhancementController}){
  const p=c.preview;
  const originalColors=['#100a35','#351069','#72217e','#b52a91','#f05857','#ffe27a'];
- const referenceOnly=c.showOriginal||c.settings.palette==='original'||!p?.legend.length;
- const colors=referenceOnly?originalColors:p!.legend;
- const calibrated=!referenceOnly&&p!.quantitative_legend;
+ const colors=p?.legend.length?p.legend:originalColors;
  const minimum=c.analysis?.statistics?.minimum_c,maximum=c.analysis?.statistics?.maximum_c;
+ const calibrated=c.analysis?.status==='completed'&&minimum!=null&&maximum!=null&&maximum>minimum;
  const legendRef=useRef<HTMLDivElement>(null);
  const [position,setPosition]=useState<{x:number;y:number}|null>(null);
  const drag=useRef<{id:number;clientX:number;clientY:number;x:number;y:number}|null>(null);
@@ -131,7 +130,7 @@ export function EnhancementLegend({control:c}:{control:EnhancementController}){
  const displayLow=fullLow==null||fullHigh==null||rawLow==null?undefined:Math.max(fullLow,Math.min(fullHigh-.1,rawLow));
  const displayHigh=fullLow==null||fullHigh==null||rawHigh==null||displayLow==null?undefined:Math.max(displayLow+.1,Math.min(fullHigh,rawHigh));
  const startScale=(kind:'low'|'high',e:ReactPointerEvent<HTMLButtonElement>)=>{if(e.button!==0||displayLow==null||displayHigh==null)return;e.preventDefault();e.stopPropagation();e.currentTarget.setPointerCapture(e.pointerId);c.beginGesture();scaleDrag.current={id:e.pointerId,kind,clientY:e.clientY,low:displayLow,high:displayHigh,height:legendRef.current?.querySelector('.legendRail')?.getBoundingClientRect().height||220}};
- const moveScale=(e:ReactPointerEvent<HTMLButtonElement>)=>{const d=scaleDrag.current;if(d?.id!==e.pointerId||fullLow==null||fullHigh==null)return;e.preventDefault();e.stopPropagation();const span=Math.max(.1,fullHigh-fullLow),delta=-(e.clientY-d.clientY)/Math.max(1,d.height)*span;if(d.kind==='high')c.change({low:d.low,high:Math.max(d.low+.1,Math.min(fullHigh,d.high+delta))});else c.change({low:Math.min(d.high-.1,Math.max(fullLow,d.low+delta)),high:d.high})};
+ const moveScale=(e:ReactPointerEvent<HTMLButtonElement>)=>{const d=scaleDrag.current;if(d?.id!==e.pointerId||fullLow==null||fullHigh==null)return;e.preventDefault();e.stopPropagation();const span=Math.max(.1,fullHigh-fullLow),delta=-(e.clientY-d.clientY)/Math.max(1,d.height)*span,palette=c.settings.palette==='original'?'medical':c.settings.palette;if(d.kind==='high')c.change({palette,low:d.low,high:Math.max(d.low+.1,Math.min(fullHigh,d.high+delta))});else c.change({palette,low:Math.min(d.high-.1,Math.max(fullLow,d.low+delta)),high:d.high})};
  const endScale=(e:ReactPointerEvent<HTMLButtonElement>)=>{if(scaleDrag.current?.id!==e.pointerId)return;moveScale(e);scaleDrag.current=null;c.endGesture()};
  const scalePosition=(value:number|undefined)=>value==null||fullLow==null||fullHigh==null?0:Math.max(0,Math.min(100,100-(value-fullLow)/(fullHigh-fullLow)*100));
  const highPosition=scalePosition(displayHigh),lowPosition=scalePosition(displayLow);
