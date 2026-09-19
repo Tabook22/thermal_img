@@ -362,11 +362,16 @@ def export_material(image_id:int,body:ExportWorkspace,db:Session):
     rgb,_,_=enhancement_source(image_id,None,db)
     regions=[region_dict(r) for r in db.scalars(select(Region).where(Region.analysis_id==latest.id)).all()] if latest else []
     luts=official_palette_luts(original,settings.dji_irp_path)
-    guide=None; guide_name=(image.metadata_json or {}).get("guide_image_path")
-    guide_path=settings.storage_root/guide_name if guide_name else None
-    if body.guide_overlay and guide_path and guide_path.is_file():
-        with Image.open(guide_path) as source: guide=source.convert("RGBA").copy()
-    try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None,luts,guide)
+    metadata=image.metadata_json or {}; stored_guides=metadata.get("guide_images") or []
+    guide_paths={str(item.get("id")):settings.storage_root/item["path"] for item in stored_guides if isinstance(item,dict) and item.get("id") and item.get("path")}
+    legacy_name=metadata.get("guide_image_path")
+    if legacy_name: guide_paths.setdefault("legacy",settings.storage_root/legacy_name)
+    guide_images={}
+    for placement in body.guide_overlays:
+        path=guide_paths.get(placement.id)
+        if path and path.is_file():
+            with Image.open(path) as source: guide_images[placement.id]=source.convert("RGBA").copy()
+    try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None,luts,guide_images)
     except ValueError as exc: fail(422,"export_unavailable",str(exc))
     return image,latest,original,regions,report
 
@@ -382,18 +387,21 @@ def export_editable_package(image_id:int,body:ExportWorkspace,db:Session=Depends
     export_root=settings.storage_root/"exports"; export_root.mkdir(parents=True,exist_ok=True)
     target=export_root/f"{uuid.uuid4().hex}.thermalpkg"
     original_suffix=Path(image.original_name).suffix.lower() or original.suffix.lower() or ".jpg"
-    guide_name=(image.metadata_json or {}).get("guide_image_path"); guide_path=settings.storage_root/guide_name if guide_name else None
-    has_guide=bool(body.guide_overlay and guide_path and guide_path.is_file())
-    files={"original":f"source/original{original_suffix}","report":"report/report.png","matrix":"data/temperature-matrix.npz" if analysis else None,"guide":"support/guide.png" if has_guide else None}
+    stored_guides=(image.metadata_json or {}).get("guide_images") or []
+    stored_paths={str(item.get("id")):settings.storage_root/item["path"] for item in stored_guides if isinstance(item,dict) and item.get("id") and item.get("path")}
+    legacy_name=(image.metadata_json or {}).get("guide_image_path")
+    if legacy_name: stored_paths.setdefault("legacy",settings.storage_root/legacy_name)
+    guide_paths={item.id:stored_paths[item.id] for item in body.guide_overlays if item.id in stored_paths and stored_paths[item.id].is_file()}
+    files={"original":f"source/original{original_suffix}","report":"report/report.png","matrix":"data/temperature-matrix.npz" if analysis else None,"guides":{guide_id:f"support/guides/{guide_id}.png" for guide_id in guide_paths}}
     metadata=dict(image.metadata_json or {})
-    for key in ("preview_path","enhancement","drawings","notes","workspace","guide_image_path"): metadata.pop(key,None)
+    for key in ("preview_path","enhancement","drawings","notes","workspace","guide_image_path","guide_images"): metadata.pop(key,None)
     manifest={
         "format":PACKAGE_FORMAT,"version":PACKAGE_VERSION,"created_at":datetime.utcnow().isoformat()+"Z",
         "source":{"original_name":image.original_name,"sha256":image.sha256,"classification":image.classification,"camera_model":image.camera_model,"camera_latitude":image.camera_latitude,"camera_longitude":image.camera_longitude,"metadata":metadata},
         "analysis":analysis_dict(analysis) if analysis else None,"regions":regions,"workspace":body.model_dump(),"files":files,
         "checksums":{"original_sha256":image.sha256,"report_sha256":hashlib.sha256(report).hexdigest(),"matrix_sha256":hashlib.sha256((settings.storage_root/analysis.matrix_path).read_bytes()).hexdigest() if analysis and analysis.matrix_path else None},
     }
-    try: write_package(target,manifest,original,report,settings.storage_root/analysis.matrix_path if analysis and analysis.matrix_path else None,guide_path if has_guide else None)
+    try: write_package(target,manifest,original,report,settings.storage_root/analysis.matrix_path if analysis and analysis.matrix_path else None,guide_paths)
     except Exception:
         target.unlink(missing_ok=True); raise
     filename=f"{safe_stem(image.original_name)}.thermalpkg"
@@ -403,7 +411,42 @@ def export_editable_package(image_id:int,body:ExportWorkspace,db:Session=Depends
 def image_workspace(image_id:int,db:Session=Depends(get_db)):
     image=db.get(ThermalImage,image_id)
     if not image: fail(404,"image_not_found","Image not found")
-    return ExportWorkspace.model_validate((image.metadata_json or {}).get("workspace",{}))
+    metadata=image.metadata_json or {}; saved=dict(metadata.get("workspace") or {})
+    if not saved.get("guide_overlays") and saved.get("guide_overlay") and metadata.get("guide_image_path"):
+        legacy=saved["guide_overlay"]
+        saved["guide_overlays"]=[{"id":"legacy","x":legacy.get("x",.62),"y":legacy.get("y",.08),"width":legacy.get("width",.3),"height":legacy.get("height",legacy.get("width",.3)),"zoom":legacy.get("zoom",1)}]
+    return ExportWorkspace.model_validate(saved)
+
+@app.post("/api/images/{image_id}/guide-images",status_code=201)
+async def upload_guide_images(image_id:int,file:UploadFile=File(...),db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    metadata=image.metadata_json or {}; guides=list(metadata.get("guide_images") or [])
+    if len(guides)>=100: fail(422,"guide_image_limit","Supporting image storage for this thermal image is full")
+    content=await file.read(20*1024*1024+1)
+    if not content or len(content)>20*1024*1024: fail(413,"guide_image_too_large","Guide image must be 20 MB or smaller")
+    try:
+        with Image.open(io.BytesIO(content)) as source: source.verify()
+        with Image.open(io.BytesIO(content)) as source:
+            source.thumbnail((4096,4096),Image.Resampling.LANCZOS)
+            converted=source.convert("RGBA") if source.mode in ("RGBA","LA") or "transparency" in source.info else source.convert("RGB")
+            guide_id=uuid.uuid4().hex; guide_name=f"guides/{guide_id}.png"; guide_path=settings.storage_root/guide_name; guide_path.parent.mkdir(parents=True,exist_ok=True)
+            converted.save(guide_path,"PNG",optimize=True)
+    except (OSError,ValueError):
+        fail(422,"invalid_guide_image","Choose a valid PNG, JPEG, WEBP, or TIFF image")
+    display_name=Path(file.filename or "guide.png").name[:255]
+    guides.append({"id":guide_id,"path":guide_name,"name":display_name})
+    image.metadata_json={**metadata,"guide_images":guides};db.commit()
+    return {"id":guide_id,"url":f"/api/images/{image.id}/guide-images/{guide_id}","name":display_name}
+
+@app.get("/api/images/{image_id}/guide-images/{guide_id}")
+def get_guide_images(image_id:int,guide_id:str,db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    item=next((item for item in ((image.metadata_json or {}).get("guide_images") or []) if isinstance(item,dict) and item.get("id")==guide_id),None)
+    path=settings.storage_root/item["path"] if item and item.get("path") else None
+    if not path or not path.is_file(): fail(404,"guide_image_not_found","Supporting image was not found")
+    return FileResponse(path,media_type="image/png",headers={"Cache-Control":"no-store"})
 
 @app.post("/api/images/{image_id}/guide-image",status_code=201)
 async def upload_guide_image(image_id:int,file:UploadFile=File(...),db:Session=Depends(get_db)):
@@ -459,8 +502,13 @@ async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db
                 if written>settings.max_upload_mb*4*1024*1024: fail(413,"package_too_large","Inspection package exceeds the size limit")
                 output.write(chunk)
         with ZipFile(temporary) as archive:
-            manifest=validate_archive(archive); workspace=ExportWorkspace.model_validate(manifest.get("workspace") or {})
-            source=manifest.get("source") or {}; files=manifest["files"]
+            manifest=validate_archive(archive); source=manifest.get("source") or {}; files=manifest["files"]
+            raw_workspace=dict(manifest.get("workspace") or {})
+            if not raw_workspace.get("guide_overlays") and raw_workspace.get("guide_overlay") and files.get("guide"):
+                legacy=raw_workspace["guide_overlay"]
+                raw_workspace["guide_overlays"]=[{"id":"legacy","x":legacy.get("x",.62),"y":legacy.get("y",.08),"width":legacy.get("width",.3),"height":legacy.get("height",legacy.get("width",.3)),"zoom":legacy.get("zoom",1)}]
+                files={**files,"guides":{"legacy":files["guide"]}}
+            workspace=ExportWorkspace.model_validate(raw_workspace)
             original_name=Path(source.get("original_name") or "restored-thermal.jpg").name[:255]
             suffix=Path(original_name).suffix[:10] or ".jpg"; storage_name=f"originals/{uuid.uuid4().hex}{suffix}"
             original_path=settings.storage_root/storage_name; original_path.parent.mkdir(parents=True,exist_ok=True); created_paths.append(original_path)
@@ -475,15 +523,19 @@ async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db
             sig=image_signature(original_path)
             if sig=="unknown": raise ValueError("Package original is not a supported image")
             preview_name=f"previews/{uuid.uuid4().hex}.jpg"; preview_path=settings.storage_root/preview_name; preview_path.parent.mkdir(parents=True,exist_ok=True); created_paths.append(preview_path); preview(original_path,preview_path)
-            guide_name=None; guide_member=files.get("guide")
-            if workspace.guide_overlay and guide_member:
+            restored_guides=[]; guide_members=files.get("guides") or {}
+            overlay_ids={item.id for item in workspace.guide_overlays}
+            if not isinstance(guide_members,dict): raise ValueError("Inspection package guide list is invalid")
+            for guide_id,guide_member in guide_members.items():
+                if guide_id not in overlay_ids or not isinstance(guide_member,str): continue
                 guide_bytes=archive.read(guide_member)
-                if len(guide_bytes)>20*1024*1024: raise ValueError("Guide image exceeds the supported size")
+                if len(guide_bytes)>20*1024*1024: raise ValueError("Supporting image exceeds the supported size")
                 with Image.open(io.BytesIO(guide_bytes)) as guide_source: guide_source.verify()
                 guide_name=f"guides/{uuid.uuid4().hex}.png"; guide_path=settings.storage_root/guide_name; guide_path.parent.mkdir(parents=True,exist_ok=True);created_paths.append(guide_path);guide_path.write_bytes(guide_bytes)
+                restored_guides.append({"id":guide_id,"path":guide_name,"name":f"Supporting image {len(restored_guides)+1}"})
             metadata=source.get("metadata") if isinstance(source.get("metadata"),dict) else {}
             metadata={**metadata,"signature":sig,"preview_path":preview_name,"source_preserved":True,"imported_package":True,"enhancement":workspace.enhancement.model_dump(),"drawings":[x.model_dump() for x in workspace.drawings],"notes":[x.model_dump() for x in workspace.notes],"workspace":workspace.model_dump()}
-            if guide_name: metadata["guide_image_path"]=guide_name
+            if restored_guides: metadata["guide_images"]=restored_guides
             image=ThermalImage(inspection_id=inspection_id,original_name=original_name,storage_name=storage_name,sha256=digest.hexdigest(),classification=source.get("classification") or ("pending_decoder" if sig=="jpeg" else "ordinary_image"),camera_model=source.get("camera_model"),camera_latitude=source.get("camera_latitude"),camera_longitude=source.get("camera_longitude"),metadata_json=metadata)
             db.add(image); db.flush(); imported_analysis=None
             saved_analysis=manifest.get("analysis"); matrix_member=files.get("matrix")

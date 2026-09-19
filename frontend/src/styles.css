@@ -28,11 +28,13 @@
 
 /* Supporting guide image overlay */
 .guideImageOverlay{position:absolute;z-index:11;line-height:0;cursor:move;touch-action:none;user-select:none;filter:drop-shadow(0 4px 12px #0009)}
-.guideImageOverlay>img{display:block;width:100%;height:auto;max-width:none;max-height:none;filter:none;pointer-events:none;border:1px solid rgba(255,255,255,.75)}
+.guideImageViewport{width:100%;height:100%;overflow:hidden;background:#07101599;border:1px solid rgba(255,255,255,.75)}
+.guideImageViewport>img{display:block;width:100%;height:100%;object-fit:contain;max-width:none;max-height:none;filter:none;pointer-events:none;transform-origin:center center;transition:transform .12s ease-out}
 .guideImageOverlay.selected{outline:1px dashed #ff9a61;outline-offset:3px}
-.guideImageControls{display:none;position:absolute;right:3px;top:3px;gap:3px;line-height:normal}
+.guideImageControls{display:none;position:absolute;right:3px;top:3px;align-items:center;gap:3px;line-height:normal}
 .guideImageOverlay.selected>.guideImageControls{display:flex}
 .guideImageControls button{width:25px;height:25px;padding:0;border:1px solid #d8e5e9;border-radius:4px;background:#09151ddd;color:#fff;font-size:18px;line-height:20px;cursor:pointer}
+.guideImageControls button:disabled{opacity:.4;cursor:not-allowed}.guideImageControls span{height:25px;min-width:42px;padding:0 5px;border-radius:4px;background:#09151ddd;color:#fff;font-size:11px;line-height:25px;text-align:center}
 .guideImageControls button:hover{background:#f06a2b}
 .guideImageResize{display:none;position:absolute;right:-7px;bottom:-7px;width:16px;height:16px;border:2px solid #ff7b2b;border-radius:50%;background:#fff;box-shadow:0 1px 5px #000;cursor:nwse-resize;touch-action:none}
 .guideImageOverlay.selected>.guideImageResize{display:block}
