@@ -44,7 +44,7 @@ class ExportWorkspace(BaseModel):
     insulator_label: Literal["inner", "outer"] | None = None
     insulator_label_x: float = Field(0.78, ge=0, le=1)
     insulator_label_y: float = Field(0.025, ge=0, le=1)
-    insulator_label_width: float = Field(0.2, ge=0.11, le=0.42)
+    insulator_label_width: float = Field(0.2, ge=0.06, le=0.55)
     probes: list[ExportProbe] = Field(default_factory=list, max_length=500)
     drawings: list[ExportDrawing] = Field(default_factory=list, max_length=500)
     notes: list[ExportNote] = Field(default_factory=list, max_length=500)
@@ -100,22 +100,22 @@ def render_report_png(
 
     if workspace.insulator_label:
         label = workspace.insulator_label.title()
-        badge_font = _font(max(15, round(width / 38)))
-        text_box = draw.textbbox((0, 0), label, font=badge_font)
-        text_width = text_box[2] - text_box[0]
-        badge_width = min(width, max(text_width + 20, round(width * workspace.insulator_label_width)))
-        badge_height = min(height, max(24, round(badge_width / 2.2)))
+        badge_width = min(width, max(34, round(width * workspace.insulator_label_width)))
+        badge_height = min(height, max(16, round(badge_width / 2.2)))
+        badge_font = _font(max(7, round(badge_width * .18)))
         left = min(width - badge_width, round(width * workspace.insulator_label_x))
         top = min(height - badge_height, round(height * workspace.insulator_label_y))
         right, bottom = left + badge_width, top + badge_height
-        pad = max(6, round(badge_width / 16)); icon_width = max(14, round(badge_width / 8))
-        draw.rounded_rectangle((left, top, right, bottom), radius=max(5, round(width / 160)), fill=(8, 16, 24, 210), outline="white", width=max(2, round(width / 420)))
+        pad = max(2, round(badge_width * .05)); icon_width = max(6, round(badge_width * .13))
+        border = max(1, round(badge_width / 100)); inset = max(3, round(badge_height * .14))
+        draw.rounded_rectangle((left, top, right, bottom), radius=max(2, round(badge_width / 32)), fill=(8, 16, 24, 210), outline="white", width=border)
         cx = left + pad + icon_width / 2
-        draw.line((cx, top + 8, cx, bottom - 8), fill="#e8eef0", width=max(2, round(width / 420)))
+        draw.line((cx, top + inset, cx, bottom - inset), fill="#e8eef0", width=border)
         disc_width = icon_width * .78
         for index in range(7):
-            cy = top + 11 + index * (badge_height - 22) / 6
-            draw.ellipse((cx-disc_width/2, cy-2, cx+disc_width/2, cy+2), fill="#cbd4d8", outline="#ffffff")
+            cy = top + inset + index * (badge_height - inset * 2) / 6
+            thickness = max(1, badge_height / 35)
+            draw.ellipse((cx-disc_width/2, cy-thickness, cx+disc_width/2, cy+thickness), fill="#cbd4d8", outline="#ffffff")
         draw.text((left + pad * 2 + icon_width, (top + bottom) / 2), label, font=badge_font, fill="white", anchor="lm")
 
     def pixel(point: dict) -> tuple[float, float]:
