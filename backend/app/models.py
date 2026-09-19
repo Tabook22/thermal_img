@@ -4,10 +4,36 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase): pass
 
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="user")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    window_start: Mapped[datetime] = mapped_column(DateTime)
+
 class Tower(Base):
     __tablename__ = "towers"
+    __table_args__ = (UniqueConstraint("owner_id", "tower_code", name="uq_tower_owner_code"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    tower_code: Mapped[str] = mapped_column(String(100), unique=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    tower_code: Mapped[str] = mapped_column(String(100))
     circuit: Mapped[str | None] = mapped_column(String(100))
     verified_latitude: Mapped[float | None] = mapped_column(Float)
     verified_longitude: Mapped[float | None] = mapped_column(Float)
@@ -15,6 +41,7 @@ class Tower(Base):
 class Inspection(Base):
     __tablename__ = "inspections"
     id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     tower_id: Mapped[int] = mapped_column(ForeignKey("towers.id"))
     phase: Mapped[str | None] = mapped_column(String(30))
     insulator_identifier: Mapped[str | None] = mapped_column(String(100))
@@ -65,4 +92,3 @@ class HotspotObservation(Base):
 class Report(Base):
     __tablename__ = "reports"
     id: Mapped[int] = mapped_column(primary_key=True); analysis_id: Mapped[int] = mapped_column(ForeignKey("analysis_versions.id")); storage_path: Mapped[str] = mapped_column(String(255)); created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-

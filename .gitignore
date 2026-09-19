@@ -18,3 +18,4 @@ dji_thermal_sdk_*.zip
 *.pyc
 backend/enhancement-server.*.log
 backups/
+.private/

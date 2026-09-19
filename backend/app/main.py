@@ -16,6 +16,7 @@ from starlette.background import BackgroundTask
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from .config import settings
+from .auth import active_user, authorize_request, private_library_root, router as auth_router
 from .branding import BrandingSettings, logo_path, public_branding, save_branding, store_logo
 from .conversation_pdf import render_conversation_pdf, render_conversation_text
 from .dji_palette import official_palette_luts
@@ -30,8 +31,18 @@ from .schemas import AnalysisStart, HotspotRequest, ImageDrawingInput, ImageNote
 from .thermal import DecodeError, DjiCliDecoder, UnsupportedThermalImage, hotspots, image_signature, preview, region_mask, statistics
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Tower Thermal Inspector API", version="1.0.0")
+app = FastAPI(title="Tower Thermal Inspector API", version="1.0.0", dependencies=[Depends(authorize_request)])
+app.include_router(auth_router)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["*"], allow_headers=["*"])
+
+@app.middleware("http")
+async def private_response_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 settings.storage_root.mkdir(parents=True, exist_ok=True)
 executor = ThreadPoolExecutor(max_workers=settings.decoder_concurrency)
 decoder = DjiCliDecoder(settings.dji_irp_path or Path("missing-dji-irp"), settings.dji_sdk_version, settings.decoder_timeout_seconds)
@@ -123,7 +134,7 @@ class InternetSearch(BaseModel):
 
 @app.get("/api/library/documents")
 def library_documents():
-    return list_documents(settings.storage_root)
+    return list_documents(private_library_root())
 
 @app.post("/api/library/conversations", status_code=201)
 def save_conversation(body:ConversationExport):
@@ -133,7 +144,7 @@ def save_conversation(body:ConversationExport):
     if not title: fail(422,"conversation_title_required","Enter a title for the conversation")
     slug=re.sub(r"[^a-zA-Z0-9_-]+","-",title).strip("-")[:60] or "inspection-chat"
     suffix=f".{body.format}"
-    temporary=library_root(settings.storage_root)/f"conversation-{uuid.uuid4().hex}{suffix}"
+    temporary=library_root(private_library_root())/f"conversation-{uuid.uuid4().hex}{suffix}"
     filename=f"{slug}-{datetime.now():%Y%m%d-%H%M%S}{suffix}"
     try:
         messages=[message.model_dump() for message in body.messages]
@@ -141,7 +152,7 @@ def save_conversation(body:ConversationExport):
             temporary.write_bytes(render_conversation_pdf(messages,body.image_name,title))
         else:
             temporary.write_text(render_conversation_text(messages,body.image_name,title),encoding="utf-8")
-        return add_document(settings.storage_root,temporary,filename)
+        return add_document(private_library_root(),temporary,filename)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -150,7 +161,7 @@ async def upload_library_document(file:UploadFile=File(...)):
     suffix=Path(file.filename or "").suffix.lower()
     if suffix not in SUPPORTED:
         fail(422,"unsupported_document","Supported files: PDF, DOCX, XLSX, text, images, audio, and video")
-    temporary=library_root(settings.storage_root)/f"upload-{uuid.uuid4().hex}{suffix}"
+    temporary=library_root(private_library_root())/f"upload-{uuid.uuid4().hex}{suffix}"
     size=0
     try:
         with temporary.open("wb") as output:
@@ -158,25 +169,25 @@ async def upload_library_document(file:UploadFile=File(...)):
                 size+=len(chunk)
                 if size>(MAX_MEDIA_BYTES if suffix in MEDIA else MAX_DOCUMENT_BYTES): fail(413,"document_too_large","File exceeds the size limit")
                 output.write(chunk)
-        try: return add_document(settings.storage_root,temporary,file.filename or "document")
+        try: return add_document(private_library_root(),temporary,file.filename or "document")
         except (ValueError,RuntimeError,OSError,BadZipFile) as exc: fail(422,"document_unreadable",str(exc))
     finally:
         temporary.unlink(missing_ok=True)
 
 @app.get("/api/library/documents/{document_id}/file")
 def library_document_file(document_id:str):
-    document=get_document(settings.storage_root,document_id)
+    document=get_document(private_library_root(),document_id)
     if not document: fail(404,"document_not_found","Document not found")
-    path=library_root(settings.storage_root)/document["stored_name"]
+    path=library_root(private_library_root())/document["stored_name"]
     suffix=path.suffix.lower()
     media_types={".mp3":"audio/mpeg",".wav":"audio/wav",".m4a":"audio/mp4",".ogg":"audio/ogg",".mp4":"video/mp4",".webm":"video/webm",".mov":"video/quicktime"}
     return FileResponse(path,filename=document["filename"],media_type=media_types.get(suffix),content_disposition_type="inline" if suffix in {".pdf",".jpg",".jpeg",".png",".txt",".md",".csv",*MEDIA} else "attachment")
 
 @app.get("/api/library/documents/{document_id}/pages/{page_number}/preview")
 def library_pdf_page_preview(document_id:str,page_number:int):
-    document=get_document(settings.storage_root,document_id)
+    document=get_document(private_library_root(),document_id)
     if not document: fail(404,"document_not_found","Document not found")
-    path=library_root(settings.storage_root)/document["stored_name"]
+    path=library_root(private_library_root())/document["stored_name"]
     if path.suffix.lower()!=".pdf": fail(422,"not_pdf","This resource is not a PDF")
     with pymupdf.open(path) as pdf:
         if page_number<1 or page_number>len(pdf): fail(404,"page_not_found","PDF page not found")
@@ -185,25 +196,25 @@ def library_pdf_page_preview(document_id:str,page_number:int):
 
 @app.get("/api/library/documents/{document_id}/text")
 def library_document_text(document_id:str):
-    document=get_document(settings.storage_root,document_id)
+    document=get_document(private_library_root(),document_id)
     if not document: fail(404,"document_not_found","Document not found")
     if Path(document["stored_name"]).suffix.lower() not in TEXT_EDITABLE: fail(422,"document_not_editable","Only text files can be edited")
-    path=library_root(settings.storage_root)/document["stored_name"]
+    path=library_root(private_library_root())/document["stored_name"]
     return {"text":path.read_text(encoding="utf-8-sig",errors="replace")}
 
 @app.put("/api/library/documents/{document_id}/text")
 def edit_library_document_text(document_id:str,body:TextDocumentUpdate):
-    try: return update_text_document(settings.storage_root,document_id,body.text)
+    try: return update_text_document(private_library_root(),document_id,body.text)
     except FileNotFoundError: fail(404,"document_not_found","Document not found")
     except ValueError as exc: fail(422,"document_not_editable",str(exc))
 
 @app.delete("/api/library/documents/{document_id}",status_code=204)
 def remove_library_document(document_id:str):
-    if not delete_document(settings.storage_root,document_id): fail(404,"document_not_found","Document not found")
+    if not delete_document(private_library_root(),document_id): fail(404,"document_not_found","Document not found")
 
 @app.post("/api/library/search")
 def search_library(body:LibrarySearch):
-    return {"results":search_documents(settings.storage_root,body.query)}
+    return {"results":search_documents(private_library_root(),body.query)}
 
 @app.post("/api/internet/search")
 def search_internet(body:InternetSearch):
@@ -230,14 +241,15 @@ def search_internet(body:InternetSearch):
 
 @app.post("/api/inspections", status_code=201)
 def create_inspection(body: InspectionCreate, db:Session=Depends(get_db)):
-    tower=db.scalar(select(Tower).where(Tower.tower_code==body.tower_code))
-    if not tower: tower=Tower(tower_code=body.tower_code,circuit=body.circuit); db.add(tower); db.flush()
-    fields=body.model_dump(exclude={"tower_code","circuit"}); item=Inspection(tower_id=tower.id,**fields); db.add(item); db.commit()
+    user=active_user()
+    tower=db.scalar(select(Tower).where(Tower.tower_code==body.tower_code,Tower.owner_id==user.id))
+    if not tower: tower=Tower(tower_code=body.tower_code,circuit=body.circuit,owner_id=user.id); db.add(tower); db.flush()
+    fields=body.model_dump(exclude={"tower_code","circuit"}); item=Inspection(tower_id=tower.id,owner_id=user.id,**fields); db.add(item); db.commit()
     return {"id":item.id,"tower_code":tower.tower_code,"circuit":tower.circuit,**fields,"created_at":item.created_at}
 
 @app.get("/api/inspections")
 def list_inspections(q:str|None=None, db:Session=Depends(get_db)):
-    stmt=select(Inspection,Tower).join(Tower)
+    stmt=select(Inspection,Tower).join(Tower).where(Inspection.owner_id==active_user().id)
     if q: stmt=stmt.where(Tower.tower_code.contains(q) | Tower.circuit.contains(q))
     return [{"id":i.id,"tower_code":t.tower_code,"circuit":t.circuit,"phase":i.phase,"created_at":i.created_at} for i,t in db.execute(stmt.order_by(Inspection.created_at.desc())).all()]
 
@@ -445,6 +457,9 @@ def get_guide_images(image_id:int,guide_id:str,db:Session=Depends(get_db)):
     if not image: fail(404,"image_not_found","Image not found")
     item=next((item for item in ((image.metadata_json or {}).get("guide_images") or []) if isinstance(item,dict) and item.get("id")==guide_id),None)
     path=settings.storage_root/item["path"] if item and item.get("path") else None
+    if path is None and guide_id=="legacy":
+        legacy=(image.metadata_json or {}).get("guide_image_path")
+        if legacy: path=settings.storage_root/legacy
     if not path or not path.is_file(): fail(404,"guide_image_not_found","Supporting image was not found")
     return FileResponse(path,media_type="image/png",headers={"Cache-Control":"no-store"})
 
@@ -533,7 +548,10 @@ async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db
                 with Image.open(io.BytesIO(guide_bytes)) as guide_source: guide_source.verify()
                 guide_name=f"guides/{uuid.uuid4().hex}.png"; guide_path=settings.storage_root/guide_name; guide_path.parent.mkdir(parents=True,exist_ok=True);created_paths.append(guide_path);guide_path.write_bytes(guide_bytes)
                 restored_guides.append({"id":guide_id,"path":guide_name,"name":f"Supporting image {len(restored_guides)+1}"})
-            metadata=source.get("metadata") if isinstance(source.get("metadata"),dict) else {}
+            metadata=dict(source.get("metadata")) if isinstance(source.get("metadata"),dict) else {}
+            # Package-supplied server paths must never provide access to another workspace.
+            for key in ("guide_images","guide_image_path","preview_path","workspace","drawings","notes","enhancement"):
+                metadata.pop(key,None)
             metadata={**metadata,"signature":sig,"preview_path":preview_name,"source_preserved":True,"imported_package":True,"enhancement":workspace.enhancement.model_dump(),"drawings":[x.model_dump() for x in workspace.drawings],"notes":[x.model_dump() for x in workspace.notes],"workspace":workspace.model_dump()}
             if restored_guides: metadata["guide_images"]=restored_guides
             image=ThermalImage(inspection_id=inspection_id,original_name=original_name,storage_name=storage_name,sha256=digest.hexdigest(),classification=source.get("classification") or ("pending_decoder" if sig=="jpeg" else "ordinary_image"),camera_model=source.get("camera_model"),camera_latitude=source.get("camera_latitude"),camera_longitude=source.get("camera_longitude"),metadata_json=metadata)

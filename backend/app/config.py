@@ -14,9 +14,11 @@ class Settings(BaseSettings):
     decoder_timeout_seconds: int = 45
     decoder_concurrency: int = 2
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    session_cookie_secure: bool = False
+    session_cookie_path: str = "/"
+    session_hours: int = 12
     openai_api_key: str | None = None
     openai_web_model: str = "gpt-4.1-mini"
     model_config = SettingsConfigDict(env_file=BACKEND_ROOT / ".env", extra="ignore")
 
 settings = Settings()
-

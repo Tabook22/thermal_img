@@ -12,6 +12,8 @@ services:
       DECODER_TIMEOUT_SECONDS: ${DECODER_TIMEOUT_SECONDS:-45}
       DECODER_CONCURRENCY: ${DECODER_CONCURRENCY:-2}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://skygreenline-lab.io}
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_COOKIE_PATH: /thermal/
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_WEB_MODEL: ${OPENAI_WEB_MODEL:-gpt-4.1-mini}
     ports:

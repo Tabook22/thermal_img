@@ -1,4 +1,10 @@
 export const publicApiUrl=(path:string)=>path.startsWith('/api/')?`${import.meta.env.BASE_URL.replace(/\/$/,'')}${path}`:path;
+export const apiFetch=async(path:string,init:RequestInit={})=>{
+ const headers=new Headers(init.headers);headers.set('X-Thermal-Request','1');
+ const response=await fetch(publicApiUrl(path),{...init,headers,credentials:'same-origin',cache:'no-store'});
+ if(response.status===401&&!path.includes('/auth/login'))window.dispatchEvent(new Event('thermal-session-ended'));
+ return response;
+};
 const publicUrls=(value:any):any=>{
  if(Array.isArray(value))return value.map(publicUrls);
  if(value&&typeof value==='object')for(const name of Object.keys(value)){
@@ -7,6 +13,6 @@ const publicUrls=(value:any):any=>{
  }
  return value;
 };
-export const api=async<T>(path:string,init?:RequestInit):Promise<T>=>{const r=await fetch(publicApiUrl(path),init);const data=await r.json().catch(()=>({}));if(!r.ok){const detail=data.detail??data.error;const message=typeof detail==='string'?detail:detail?.message||(Array.isArray(detail)?detail.map((x:any)=>`${(x.loc||[]).slice(1).join('.')}: ${x.msg}`).join('; '):JSON.stringify(detail));throw new Error(message||`Request failed (${r.status})`)}return publicUrls(data)};
+export const api=async<T>(path:string,init?:RequestInit):Promise<T>=>{const r=await apiFetch(path,init);const data=await r.json().catch(()=>({}));if(!r.ok){const detail=data.detail??data.error;const message=typeof detail==='string'?detail:detail?.message||(Array.isArray(detail)?detail.map((x:any)=>`${(x.loc||[]).slice(1).join('.')}: ${x.msg}`).join('; '):JSON.stringify(detail));throw new Error(message||`Request failed (${r.status})`)}return publicUrls(data)};
 export type Stats={minimum_c:number|null;maximum_c:number|null;mean_c:number|null;valid_pixels:number;minimum_location:{x:number;y:number}|null;maximum_location:{x:number;y:number}|null};
 export type Analysis={id:number;status:string;version:number;sdk_version?:string;width?:number;height?:number;statistics?:Stats;error?:string;parameters?:Record<string,number>};
