@@ -1,6 +1,6 @@
 from __future__ import annotations
 import asyncio, csv, hashlib, io, json, math, os, re, shutil, uuid
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import lru_cache
@@ -11,6 +11,7 @@ import pymupdf
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from .config import settings
@@ -19,6 +20,7 @@ from .enhancement import EnhancementSettings, auto_settings, render_enhancement
 from .database import get_db, SessionLocal
 from .image_metadata import capture_note_text, extract_capture_metadata
 from .image_details import original_image_details
+from .inspection_package import ExportWorkspace, PACKAGE_FORMAT, PACKAGE_VERSION, render_report_png, safe_stem, validate_archive, write_package
 from .knowledge_base import MAX_DOCUMENT_BYTES, MAX_MEDIA_BYTES, MEDIA, SUPPORTED, TEXT_EDITABLE, add_document, delete_document, get_document, library_root, list_documents, search_documents, update_text_document
 from .models import AnalysisVersion, HotspotObservation, Inspection, Region, ThermalImage, Tower
 from .schemas import AnalysisStart, HotspotRequest, ImageDrawingInput, ImageNoteInput, InspectionCreate, Point, RegionCreate
@@ -311,6 +313,110 @@ def image_details(image_id:int,db:Session=Depends(get_db)):
         return original_image_details(source,capture,settings.dji_irp_path)
     except (OSError, ValueError):
         fail(400,"unreadable_file","Could not read image details")
+
+def export_material(image_id:int,body:ExportWorkspace,db:Session):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    original=settings.storage_root/image.storage_name
+    if not original.is_file(): fail(404,"image_file_missing","Original image is missing from storage")
+    latest=db.scalar(select(AnalysisVersion).where(AnalysisVersion.image_id==image_id,AnalysisVersion.status=="completed").order_by(AnalysisVersion.version.desc()).limit(1))
+    matrix=valid=None
+    if latest: matrix,valid=load_matrix(latest)
+    rgb,_,_=enhancement_source(image_id,None,db)
+    regions=[region_dict(r) for r in db.scalars(select(Region).where(Region.analysis_id==latest.id)).all()] if latest else []
+    try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None)
+    except ValueError as exc: fail(422,"export_unavailable",str(exc))
+    return image,latest,original,regions,report
+
+@app.post("/api/images/{image_id}/exports/report")
+def export_report_image(image_id:int,body:ExportWorkspace,db:Session=Depends(get_db)):
+    image,_,_,_,report=export_material(image_id,body,db)
+    filename=f"{safe_stem(image.original_name)}-report.png"
+    return StreamingResponse(io.BytesIO(report),media_type="image/png",headers={"Content-Disposition":f'attachment; filename="{filename}"',"X-Thermal-Data":"flattened-display-only"})
+
+@app.post("/api/images/{image_id}/exports/package")
+def export_editable_package(image_id:int,body:ExportWorkspace,db:Session=Depends(get_db)):
+    image,analysis,original,regions,report=export_material(image_id,body,db)
+    export_root=settings.storage_root/"exports"; export_root.mkdir(parents=True,exist_ok=True)
+    target=export_root/f"{uuid.uuid4().hex}.thermalpkg"
+    original_suffix=Path(image.original_name).suffix.lower() or original.suffix.lower() or ".jpg"
+    files={"original":f"source/original{original_suffix}","report":"report/report.png","matrix":"data/temperature-matrix.npz" if analysis else None}
+    metadata=dict(image.metadata_json or {})
+    for key in ("preview_path","enhancement","drawings","notes","workspace"): metadata.pop(key,None)
+    manifest={
+        "format":PACKAGE_FORMAT,"version":PACKAGE_VERSION,"created_at":datetime.utcnow().isoformat()+"Z",
+        "source":{"original_name":image.original_name,"sha256":image.sha256,"classification":image.classification,"camera_model":image.camera_model,"camera_latitude":image.camera_latitude,"camera_longitude":image.camera_longitude,"metadata":metadata},
+        "analysis":analysis_dict(analysis) if analysis else None,"regions":regions,"workspace":body.model_dump(),"files":files,
+        "checksums":{"original_sha256":image.sha256,"report_sha256":hashlib.sha256(report).hexdigest(),"matrix_sha256":hashlib.sha256((settings.storage_root/analysis.matrix_path).read_bytes()).hexdigest() if analysis and analysis.matrix_path else None},
+    }
+    try: write_package(target,manifest,original,report,settings.storage_root/analysis.matrix_path if analysis and analysis.matrix_path else None)
+    except Exception:
+        target.unlink(missing_ok=True); raise
+    filename=f"{safe_stem(image.original_name)}.thermalpkg"
+    return FileResponse(target,filename=filename,media_type="application/vnd.tower-thermal-inspection+zip",background=BackgroundTask(target.unlink,missing_ok=True))
+
+@app.get("/api/images/{image_id}/workspace")
+def image_workspace(image_id:int,db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    return ExportWorkspace.model_validate((image.metadata_json or {}).get("workspace",{}))
+
+@app.post("/api/inspections/{inspection_id}/packages",status_code=201)
+async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db:Session=Depends(get_db)):
+    if not db.get(Inspection,inspection_id): fail(404,"inspection_not_found","Inspection not found")
+    if Path(file.filename or "").suffix.lower()!=".thermalpkg": fail(422,"unsupported_package","Choose a .thermalpkg file exported by this application")
+    import_root=settings.storage_root/"imports"; import_root.mkdir(parents=True,exist_ok=True)
+    temporary=import_root/f"{uuid.uuid4().hex}.thermalpkg"; written=0
+    created_paths=[]
+    try:
+        with temporary.open("wb") as output:
+            while chunk:=await file.read(1024*1024):
+                written+=len(chunk)
+                if written>settings.max_upload_mb*4*1024*1024: fail(413,"package_too_large","Inspection package exceeds the size limit")
+                output.write(chunk)
+        with ZipFile(temporary) as archive:
+            manifest=validate_archive(archive); workspace=ExportWorkspace.model_validate(manifest.get("workspace") or {})
+            source=manifest.get("source") or {}; files=manifest["files"]
+            original_name=Path(source.get("original_name") or "restored-thermal.jpg").name[:255]
+            suffix=Path(original_name).suffix[:10] or ".jpg"; storage_name=f"originals/{uuid.uuid4().hex}{suffix}"
+            original_path=settings.storage_root/storage_name; original_path.parent.mkdir(parents=True,exist_ok=True); created_paths.append(original_path)
+            digest=hashlib.sha256(); size=0
+            with archive.open(files["original"]) as incoming, original_path.open("wb") as output:
+                while chunk:=incoming.read(1024*1024):
+                    size+=len(chunk)
+                    if size>settings.max_upload_mb*1024*1024: raise ValueError("Original image exceeds the size limit")
+                    digest.update(chunk); output.write(chunk)
+            expected=source.get("sha256") or (manifest.get("checksums") or {}).get("original_sha256")
+            if expected and digest.hexdigest()!=expected: raise ValueError("Original image checksum does not match the package manifest")
+            sig=image_signature(original_path)
+            if sig=="unknown": raise ValueError("Package original is not a supported image")
+            preview_name=f"previews/{uuid.uuid4().hex}.jpg"; preview_path=settings.storage_root/preview_name; preview_path.parent.mkdir(parents=True,exist_ok=True); created_paths.append(preview_path); preview(original_path,preview_path)
+            metadata=source.get("metadata") if isinstance(source.get("metadata"),dict) else {}
+            metadata={**metadata,"signature":sig,"preview_path":preview_name,"source_preserved":True,"imported_package":True,"enhancement":workspace.enhancement.model_dump(),"drawings":[x.model_dump() for x in workspace.drawings],"notes":[x.model_dump() for x in workspace.notes],"workspace":workspace.model_dump()}
+            image=ThermalImage(inspection_id=inspection_id,original_name=original_name,storage_name=storage_name,sha256=digest.hexdigest(),classification=source.get("classification") or ("pending_decoder" if sig=="jpeg" else "ordinary_image"),camera_model=source.get("camera_model"),camera_latitude=source.get("camera_latitude"),camera_longitude=source.get("camera_longitude"),metadata_json=metadata)
+            db.add(image); db.flush(); imported_analysis=None
+            saved_analysis=manifest.get("analysis"); matrix_member=files.get("matrix")
+            if saved_analysis and matrix_member:
+                matrix_bytes=archive.read(matrix_member)
+                expected_matrix=(manifest.get("checksums") or {}).get("matrix_sha256")
+                if expected_matrix and hashlib.sha256(matrix_bytes).hexdigest()!=expected_matrix: raise ValueError("Temperature matrix checksum does not match the package manifest")
+                with np.load(io.BytesIO(matrix_bytes),allow_pickle=False) as data:
+                    matrix=np.asarray(data["temperatures"],dtype=np.float32); valid=np.asarray(data["valid_mask"],dtype=bool)
+                if matrix.ndim!=2 or matrix.shape!=valid.shape or matrix.size>50_000_000: raise ValueError("Temperature matrix has invalid dimensions")
+                matrix_name=f"matrices/{uuid.uuid4().hex}.npz"; matrix_path=settings.storage_root/matrix_name; matrix_path.parent.mkdir(parents=True,exist_ok=True); created_paths.append(matrix_path); np.savez_compressed(matrix_path,temperatures=matrix,valid_mask=valid)
+                imported_analysis=AnalysisVersion(image_id=image.id,version=1,status="completed",sdk_version=str(saved_analysis.get("sdk_version") or "package")[:50],matrix_path=matrix_name,width=matrix.shape[1],height=matrix.shape[0],parameters_json=saved_analysis.get("parameters") or {},parameters_provenance=saved_analysis.get("parameter_provenance") or {},stats_json=statistics(matrix,valid),warnings_json=["Restored from verified inspection package"],processed_at=datetime.utcnow())
+                db.add(imported_analysis); db.flush()
+                for saved_region in manifest.get("regions") or []:
+                    validated=RegionCreate.model_validate({"name":saved_region.get("name"),"kind":saved_region.get("kind"),"points":saved_region.get("points"),"is_reference":bool(saved_region.get("is_reference")),"minimum_point":saved_region.get("minimum_selection")})
+                    points=[p.model_dump() for p in validated.points]; mask=region_mask(matrix.shape,validated.kind,points); selected=minimum_selection(matrix,valid,mask,validated.minimum_point.model_dump() if validated.minimum_point else None)
+                    db.add(Region(analysis_id=imported_analysis.id,name=validated.name,kind=validated.kind,geometry_json={"points":points,"minimum_selection":selected},stats_json=statistics(matrix,valid&mask),is_reference=validated.is_reference))
+            db.commit()
+            return {"id":image.id,"name":image.original_name,"classification":image.classification,"sha256":image.sha256,"preview_url":f"/api/images/{image.id}/preview","latest_analysis":analysis_dict(imported_analysis) if imported_analysis else None}
+    except (BadZipFile,KeyError,ValueError,json.JSONDecodeError) as exc:
+        db.rollback()
+        for path in created_paths: path.unlink(missing_ok=True)
+        fail(422,"invalid_inspection_package",str(exc))
+    finally: temporary.unlink(missing_ok=True)
 
 @app.get("/api/images/{image_id}/notes")
 def list_image_notes(image_id:int,db:Session=Depends(get_db)):

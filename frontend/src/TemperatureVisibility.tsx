@@ -13,9 +13,10 @@ export function useTemperatureVisibility(){
   try{localStorage.setItem(storageKey,JSON.stringify(next))}catch{/* Visibility also works when browser storage is unavailable. */}
   return next;
  });
- return {visibility,toggle};
+ const replace=(next:Visibility)=>{setVisibility(next);try{localStorage.setItem(storageKey,JSON.stringify(next))}catch{/* Visibility also works when browser storage is unavailable. */}};
+ return {visibility,toggle,replace};
 }
 
-export default function TemperatureVisibility({visibility,toggle,disabled}:{visibility:Visibility;toggle:(kind:keyof Visibility)=>void;disabled:boolean}){
+export default function TemperatureVisibility({visibility,toggle,disabled}:{visibility:Visibility;toggle:(kind:keyof Visibility)=>void;replace?:(next:Visibility)=>void;disabled:boolean}){
  return <div className="temperatureVisibility" role="group" aria-label="Temperature marker visibility"><span>Show on image</span>{(['maximum','minimum'] as const).map(kind=><button type="button" key={kind} disabled={disabled} aria-label={`Show ${kind} temperature`} aria-pressed={visibility[kind]} title={`${visibility[kind]?'Hide':'Show'} ${kind} temperature markers and image labels`} onClick={()=>toggle(kind)}>{visibility[kind]?<Eye size={14}/>:<EyeOff size={14}/>}<span>{kind==='maximum'?'MAX':'MIN'}</span></button>)}</div>;
 }

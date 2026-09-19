@@ -1,0 +1,10 @@
+.exportWrap{position:relative}
+.exportWrap>.primary{cursor:pointer}
+.exportWrap>.primary:disabled{opacity:.55;cursor:not-allowed}
+.exportMenu{position:absolute;right:0;top:44px;width:330px;padding:7px;background:#101d23;border:1px solid #344952;border-radius:9px;box-shadow:0 18px 48px #000b;z-index:60}
+.exportMenu button,.exportMenu a{position:relative;width:100%;display:block;border:0;border-radius:6px;background:transparent;color:#dce5e8;text-align:left;padding:11px 55px 11px 12px;text-decoration:none;cursor:pointer}
+.exportMenu button:hover,.exportMenu a:hover{background:#1a2b32}
+.exportMenu b,.exportMenu span{display:block}
+.exportMenu b{font-size:12px}
+.exportMenu span{margin-top:4px;color:#82969e;font-size:10px;line-height:1.4}
+.exportMenu em{position:absolute;right:12px;top:12px;color:#f47a3c;font-size:9px;font-style:normal;text-transform:uppercase}
