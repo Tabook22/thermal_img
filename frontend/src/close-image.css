@@ -1,0 +1,8 @@
+.closeImage{width:31px;height:31px;padding:0;display:grid;place-items:center;border:1px solid #31434b;border-radius:6px;background:#101d23;color:#8fa3ab;cursor:pointer}
+.closeImage:hover{border-color:#f06a2b;color:#fff;background:#382017}.closeImage svg{width:16px}
+.ghost:disabled{opacity:.48;cursor:default}
+.closeImageBackdrop{position:fixed;inset:0;z-index:200;background:#020609c7;display:grid;place-items:center;padding:24px;backdrop-filter:blur(3px)}
+.closeImageDialog{width:min(460px,100%);padding:28px;background:#101d23;border:1px solid #3a5059;border-radius:13px;box-shadow:0 30px 90px #000d;text-align:center}
+.closeImageIcon{width:48px;height:48px;margin:0 auto 15px;border-radius:50%;display:grid;place-items:center;background:#402014;color:#ff7b35;border:1px solid #7b3b20}.closeImageIcon svg{width:21px}
+.closeImageDialog h2{margin:0;color:#f2f6f7;font-size:21px}.closeImageDialog p{margin:12px auto 23px;max-width:390px;color:#91a4ab;font-size:12px;line-height:1.65}
+.closeImageActions{display:flex;flex-direction:column;gap:8px}.closeImageActions button{height:42px;border-radius:7px;border:1px solid #344952;background:#17272e;color:#cbd8dc;cursor:pointer;font-weight:650}.closeImageActions button:hover{background:#20343d}.closeImageActions .saveClose{border-color:#ef6425;background:#ef6425;color:#fff}.closeImageActions .saveClose:hover{background:#ff7434}.closeImageActions .discardClose{border-color:#6b3831;color:#ffad98;background:#291a18}.closeImageActions button:disabled{opacity:.55;cursor:not-allowed}

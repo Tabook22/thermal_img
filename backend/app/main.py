@@ -361,6 +361,14 @@ def image_workspace(image_id:int,db:Session=Depends(get_db)):
     if not image: fail(404,"image_not_found","Image not found")
     return ExportWorkspace.model_validate((image.metadata_json or {}).get("workspace",{}))
 
+@app.put("/api/images/{image_id}/workspace")
+def save_image_workspace(image_id:int,body:ExportWorkspace,db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    image.metadata_json={**(image.metadata_json or {}),"workspace":body.model_dump(),"enhancement":body.enhancement.model_dump(),"drawings":[item.model_dump() for item in body.drawings],"notes":[item.model_dump() for item in body.notes]}
+    db.commit()
+    return {"saved":True,"image_id":image.id}
+
 @app.post("/api/inspections/{inspection_id}/packages",status_code=201)
 async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db:Session=Depends(get_db)):
     if not db.get(Inspection,inspection_id): fail(404,"inspection_not_found","Inspection not found")
