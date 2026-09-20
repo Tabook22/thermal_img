@@ -101,8 +101,9 @@ async def authorize_request(request: Request, db: Session = Depends(get_db)):
         analysis = db.get(AnalysisVersion, analysis_id) if analysis_id else None
         image = db.get(ThermalImage, analysis.image_id) if analysis else None
         inspection = db.get(Inspection, image.inspection_id) if image else None
-    # Administration grants account management, never implicit access to another workspace.
-    if resource and (inspection is None or inspection.owner_id != user.id):
+    # Cross-user viewing is limited to explicit, read-only administrator routes.
+    admin_review = user.role == "admin" and path.startswith("/api/admin/") and request.method == "GET"
+    if resource and (inspection is None or (inspection.owner_id != user.id and not admin_review)):
         error(404, "Item not found in your workspace")
     token = current_user.set(user)
     try:

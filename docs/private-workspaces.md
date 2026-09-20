@@ -34,7 +34,7 @@ from the backend directory. The command refuses to run if accounts already exist
 3. Administrator: **Edit** can change details, reset a password, or disable access.
    Changes to another account revoke its sessions. Reset passwords must be changed.
 4. **Delete** removes account access and revokes sessions. Inspection records are
-   retained under that deleted account, inaccessible through the application.
+   retained under that deleted account, available for read-only administrator review.
    This is archival deletion, not permanent erasure. Usernames remain reserved.
 5. **Change password** changes your own password and revokes other sessions.
    **Sign out** clears the current session. Administrators cannot disable, demote,
@@ -44,8 +44,9 @@ from the backend directory. The command refuses to run if accounts already exist
 
 The API checks ownership of inspections, images, analyses, regions, exports,
 supporting images, annotations, and saved workspaces. Library documents and search
-use a separate directory per account. Even administrators cannot browse another
-user's images. People with direct server or backup access remain trusted operators.
+use a separate directory per account. Administrators can browse all saved inspections and images through the explicit
+read-only All user work routes. They cannot modify another user's workspace through
+the ordinary editing routes. Library documents remain owner-only. People with direct server or backup access remain trusted operators.
 
 Passwords are salted PBKDF2 hashes. Session tokens are random, stored as hashes,
 and sent in HttpOnly, SameSite=Strict cookies (Secure on production HTTPS). Sessions
@@ -55,3 +56,12 @@ header and reject untrusted browser origins. API responses are not browser cache
 SQLite remains the database. Keep backups protected: they contain private work.
 Migration rollback requires a reviewed database backup restore; the migration
 does not attempt to merge multiple private workspaces back into a shared database.
+
+## Administrator review
+
+Use **All user work**, or **Users → View work**, to browse saved inspections.
+Filter by owner, search by tower/circuit/username/image name, and open an image.
+Saved work renders the persisted enhancements, measurements, notes, labels and
+supporting images; Original preview displays the source preview. Unsaved browser
+changes are not available. Disabled and deleted users remain visible for archival
+review. The normal personal Inspections page still lists only your own work.

@@ -83,6 +83,7 @@ def test_every_resource_route_checks_owner_before_read_or_write(workspace):
     count=0
     for route in app.routes:
         path=route.path
+        if path.startswith("/api/admin/"): continue
         if not any(marker in path for marker in ("{image_id}","{inspection_id}","{analysis_id}","{region_id}")): continue
         for key,value in {"image_id":"1","inspection_id":"1","analysis_id":"1","region_id":"1","x":"0","y":"0","note_id":"guess","drawing_id":"guess","guide_id":"guess"}.items(): path=path.replace("{"+key+"}",value)
         for method in route.methods:
@@ -116,6 +117,51 @@ def test_library_files_and_search_are_private(workspace):
     assert bob.delete(f"/api/library/documents/{document_id}").status_code==404
     assert bob.put(f"/api/library/documents/{document_id}/text",json={"text":"overwrite"}).status_code==404
     assert bob.post("/api/library/search",json={"query":"transformer"}).json()["results"]==[]
+
+
+def test_admin_can_review_all_saved_work_but_cannot_edit_it(workspace):
+    factory,engine,_=workspace
+    admin=factory("admin");alice=factory("alice");guest=factory()
+    paths=("/api/admin/workspaces", "/api/admin/inspections", "/api/admin/inspections/1/images",
+           "/api/admin/images/1/preview", "/api/admin/images/1/review", "/api/admin/images/1/report")
+    for path in paths:
+        assert guest.get(path).status_code==401
+        assert alice.get(path).status_code==403
+    owners=admin.get(paths[0]).json()
+    assert next(item for item in owners if item["username"]=="bob")["image_count"]==1
+    assert next(item for item in owners if item["username"]=="alice")["inspection_count"]==0
+    result=admin.get(paths[1]).json()
+    assert result["total"]==1 and result["items"][0]["owner"]["username"]=="bob"
+    assert admin.get(paths[1],params={"owner_id":2}).json()["total"]==0
+    assert admin.get(paths[1],params={"q":"BOB.JPG"}).json()["total"]==1
+    assert admin.get(paths[1],params={"q":"%"}).json()["total"]==0
+    assert admin.get(paths[1],params={"offset":1}).json()["items"]==[]
+    assert admin.get(paths[2]).json()[0]["preview_url"]=="/api/admin/images/1/preview"
+    with Session(engine) as db:
+        image=db.get(ThermalImage,1)
+        image.metadata_json={**image.metadata_json,"notes":[{"id":"note","text":"Saved evidence","x":.1,"y":.2}],
+                             "workspace":{"insulator_label":"inner","notes":[]}}
+        db.commit()
+    review=admin.get(paths[4])
+    assert review.status_code==200,review.text
+    assert review.json()["workspace"]["notes"][0]["text"]=="Saved evidence"
+    assert review.json()["workspace"]["insulator_label"]=="inner"
+    assert review.json()["regions"][0]["name"]=="Bob region"
+    rendered=admin.get(paths[5])
+    assert rendered.status_code==200,rendered.text
+    assert rendered.headers["content-type"]=="image/png"
+    assert "no-store" in rendered.headers["cache-control"]
+    assert Image.open(io.BytesIO(rendered.content)).size==(20,20)
+    assert admin.put("/api/images/1/workspace",json={}).status_code==404
+    assert admin.delete("/api/regions/1").status_code==404
+    assert admin.post("/api/admin/images/1/report",json={}).status_code==405
+    assert admin.get("/api/admin/images/999/review").status_code==404
+    assert admin.get("/api/admin/inspections/999/images").status_code==404
+    # Archived work remains reviewable; deleting its account does not transfer it.
+    assert admin.delete("/api/admin/users/3").status_code==200
+    assert admin.get(paths[4]).json()["owner"]["status"]=="Deleted"
+    assert admin.get(paths[1]).json()["items"][0]["owner"]["id"]==3
+    assert alice.get("/api/images/1/preview").status_code==404
 
 def test_admin_management_forced_password_and_session_revocation(workspace):
     factory,_,_=workspace
