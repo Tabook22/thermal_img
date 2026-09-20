@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .auth import active_user, authorize_request, private_library_root, router as auth_router
 from .admin_review import router as admin_review_router
+from .audit import ActivityRoute, add_event
+from .activity import router as activity_router
 from .branding import BrandingSettings, logo_path, public_branding, save_branding, store_logo
 from .conversation_pdf import render_conversation_pdf, render_conversation_text
 from .dji_palette import official_palette_luts
@@ -33,6 +35,8 @@ from .thermal import DecodeError, DjiCliDecoder, UnsupportedThermalImage, hotspo
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="Tower Thermal Inspector API", version="1.0.0", dependencies=[Depends(authorize_request)])
+app.router.route_class=ActivityRoute
+app.include_router(activity_router)
 app.include_router(auth_router)
 app.include_router(admin_review_router)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["*"], allow_headers=["*"])
@@ -694,7 +698,13 @@ def run_analysis(analysis_id:int):
         image.classification="supported_radiometric"; image.camera_model=result.camera_model; image.metadata_json={**(image.metadata_json or {}),**result.metadata,"measurement_ranges":result.ranges}
     except UnsupportedThermalImage as exc: analysis.status="failed"; analysis.error=str(exc); image.classification="ordinary_or_unsupported"
     except Exception as exc: analysis.status="failed"; analysis.error=str(exc)
-    finally: db.commit(); db.close()
+    finally:
+        db.commit()
+        inspection=db.get(Inspection,image.inspection_id)
+        if inspection and inspection.owner_id:
+            add_event(db,inspection.owner_id,"analysis_complete","measurement","Temperature analysis completed" if analysis.status=="completed" else "Temperature analysis failed",image=image,outcome="success" if analysis.status=="completed" else "failed")
+            db.commit()
+        db.close()
 
 @app.post("/api/images/{image_id}/analyses",status_code=202)
 def start_analysis(image_id:int,body:AnalysisStart,background:BackgroundTasks,db:Session=Depends(get_db)):

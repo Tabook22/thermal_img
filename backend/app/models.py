@@ -28,6 +28,35 @@ class LoginAttempt(Base):
     attempts: Mapped[int] = mapped_column(default=0)
     window_start: Mapped[datetime] = mapped_column(DateTime)
 
+class ActivityEvent(Base):
+    __tablename__ = "activity_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, index=True)
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    category: Mapped[str] = mapped_column(String(30))
+    summary: Mapped[str] = mapped_column(String(300))
+    outcome: Mapped[str] = mapped_column(String(20), default="success")
+    source: Mapped[str] = mapped_column(String(20), default="server")
+    image_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    image_name: Mapped[str | None] = mapped_column(String(255))
+    inspection_id: Mapped[int | None] = mapped_column(Integer)
+
+class ActivityVisit(Base):
+    __tablename__ = "activity_visits"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    session_hash: Mapped[str] = mapped_column(String(64), index=True)
+    started_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime)
+    end_reason: Mapped[str | None] = mapped_column(String(60))
+    foreground_seconds: Mapped[float] = mapped_column(Float, default=0)
+    visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    page: Mapped[str] = mapped_column(String(40), default="workspace")
+    image_id: Mapped[int | None] = mapped_column(Integer)
+    sequence: Mapped[int] = mapped_column(Integer, default=0)
+
 class Tower(Base):
     __tablename__ = "towers"
     __table_args__ = (UniqueConstraint("owner_id", "tower_code", name="uq_tower_owner_code"),)

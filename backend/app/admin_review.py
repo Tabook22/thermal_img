@@ -6,11 +6,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .audit import ActivityRoute
 from .database import get_db
 from .inspection_package import ExportWorkspace, safe_stem
 from .models import AnalysisVersion, Inspection, Region, ThermalImage, Tower, User
 
-router = APIRouter(prefix="/api/admin")
+router = APIRouter(prefix="/api/admin",route_class=ActivityRoute)
 
 
 def owner_view(user):

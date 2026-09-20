@@ -12,13 +12,14 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .audit import ActivityRoute, end_visits
 from .config import settings
 from .database import get_db
 from .models import AnalysisVersion, Inspection, LoginAttempt, Region, ThermalImage, User, UserSession
 
 COOKIE = "thermal_session"
 current_user: ContextVar[User | None] = ContextVar("thermal_user", default=None)
-router = APIRouter()
+router = APIRouter(route_class=ActivityRoute)
 
 def error(status: int, message: str):
     raise HTTPException(status, {"message": message})
@@ -80,12 +81,14 @@ async def authorize_request(request: Request, db: Session = Depends(get_db)):
         yield
         return
     user = session_user(request, db)
+    request.state.audit_db=db;request.state.audit_user_id=user.id
     if user.must_change_password and path not in {"/api/auth/me", "/api/auth/password", "/api/auth/logout"}:
         error(403, "Change your temporary password before opening your workspace")
     if (path.startswith("/api/admin/") or (path.startswith("/api/settings/") and request.method != "GET")) and user.role != "admin":
         error(403, "Only an administrator can manage users or application settings")
     params = request.path_params
     inspection = None
+    image = None
     resource = False
     if "inspection_id" in params:
         resource = True
@@ -105,6 +108,7 @@ async def authorize_request(request: Request, db: Session = Depends(get_db)):
     admin_review = user.role == "admin" and path.startswith("/api/admin/") and request.method == "GET"
     if resource and (inspection is None or (inspection.owner_id != user.id and not admin_review)):
         error(404, "Item not found in your workspace")
+    request.state.audit_image_id=image.id if image else None
     token = current_user.set(user)
     try:
         yield
@@ -162,6 +166,7 @@ def login(body: Login, request: Request, response: Response, db: Session = Depen
         else: attempt.attempts += 1
     db.commit()
     user = db.scalar(select(User).where(User.username == username))
+    if user: request.state.audit_db=db;request.state.audit_user_id=user.id
     valid = verify_password(body.password, user.password_hash if user else DUMMY_HASH)
     if not valid or not user or not user.is_active or user.is_deleted:
         error(401, "Username or password is incorrect")
@@ -177,6 +182,7 @@ def me(): return user_view(active_user())
 @router.post("/api/auth/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     token_hash = hashlib.sha256(request.cookies.get(COOKIE, "").encode()).hexdigest()
+    end_visits(db,active_user().id,"Signed out",token_hash)
     db.execute(delete(UserSession).where(UserSession.token_hash == token_hash)); db.commit()
     response.delete_cookie(COOKIE, path=settings.session_cookie_path)
     return {"signed_out": True}
@@ -187,6 +193,7 @@ def change_password(body: PasswordChange, response: Response, db: Session = Depe
     if not verify_password(body.current_password, user.password_hash): error(400, "Current password is incorrect")
     if body.current_password == body.new_password: error(400, "Choose a different password")
     user.password_hash = hash_password(body.new_password); user.must_change_password = False
+    end_visits(db,user.id,"Password changed")
     db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     issue_session(user, response, db)
     return user_view(user)
@@ -216,6 +223,7 @@ def edit_user(user_id: int, body: AccountInput, db: Session = Depends(get_db)):
     for key, value in body.model_dump(exclude={"password"}).items(): setattr(user, key, value)
     if body.password: user.password_hash=hash_password(body.password); user.must_change_password=True
     if user.id != active_user().id:
+        end_visits(db,user.id,"Access updated by administrator")
         db.execute(delete(UserSession).where(UserSession.user_id == user.id))
     save_account(db)
     return user_view(user)
@@ -227,5 +235,6 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
     if user.id == active_user().id: error(409, "You cannot delete your own administrator account")
     # Retain ownership records to avoid transferring or accidentally erasing inspection evidence.
     user.is_deleted=True; user.is_active=False; user.password_hash=hash_password(secrets.token_urlsafe(48))
+    end_visits(db,user.id,"Account deleted by administrator")
     db.execute(delete(UserSession).where(UserSession.user_id == user.id)); db.commit()
     return {"deleted": True, "workspace_retained": True}
