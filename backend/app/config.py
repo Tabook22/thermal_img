@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     session_cookie_path: str = "/"
     session_hours: int = 12
+    inspection_bridge_secret: str = ""
+    inspection_origin: str = "https://skygreenline-lab.io"
     openai_api_key: str | None = None
     openai_web_model: str = "gpt-4.1-mini"
     model_config = SettingsConfigDict(env_file=BACKEND_ROOT / ".env", extra="ignore")

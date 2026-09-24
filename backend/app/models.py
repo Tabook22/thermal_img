@@ -122,3 +122,18 @@ class HotspotObservation(Base):
 class Report(Base):
     __tablename__ = "reports"
     id: Mapped[int] = mapped_column(primary_key=True); analysis_id: Mapped[int] = mapped_column(ForeignKey("analysis_versions.id")); storage_path: Mapped[str] = mapped_column(String(255)); created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+
+class InspectionImageLink(Base):
+    __tablename__ = "inspection_image_links"
+    __table_args__ = (UniqueConstraint("owner_id", "external_user_id", "external_image_id", "source_sha256", name="uq_inspection_image_link"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    image_id: Mapped[int] = mapped_column(ForeignKey("thermal_images.id"), unique=True)
+    external_user_id: Mapped[int] = mapped_column(Integer)
+    external_image_id: Mapped[int] = mapped_column(Integer)
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    ticket: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str] = mapped_column(String(500))
+    return_path: Mapped[str] = mapped_column(String(100))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
