@@ -13,6 +13,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    activity_logging_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 

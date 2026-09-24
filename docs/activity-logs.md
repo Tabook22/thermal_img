@@ -54,7 +54,25 @@ be reconstructed. Existing signed-in accounts start recording browser visits
 after loading the new frontend; future authenticated server actions are logged
 immediately. Administrator account deletion preserves prior activity records.
 
-There are no application routes to edit or delete activity. The database and
+Migration 0004 adds an enabled-by-default per-user recording switch.
+Administrators can use **Manage recording & storage** to toggle recording and
+list all-time event/visit counts for every account, including deleted users.
+Disabling recording closes active visits and stops server events, browser events,
+and presence storage. Re-enabling starts a new visit on the next heartbeat.
+No activity is backfilled for disabled periods.
+
+Administrators may preview and confirm deletion for one user or all users,
+within explicit dates or all history. Deletion always covers every event category
+and visits whose start time falls in the range. It preserves images, inspections,
+accounts, and authentication sessions. A fixed preview end time excludes later
+activity. Active browsers can start new visits after deletion if recording stays on.
+Users cannot manage recording or delete logs. A cleanup summary is recorded in the
+administrator's own log if their recording is enabled. No logs are deleted merely
+by installing this update. There is no automatic retention policy.
+
+Deleted SQLite pages are reused by future writes; the physical database need not
+shrink immediately. Backups and downloaded logs retain their own copies. No live
+VACUUM or backup deletion is performed by these controls. The database and
 backups remain accessible to trusted server operators; this is not a tamper-proof
 external audit store. No automatic retention deletion is configured. Monitor
 database/backups as usage grows. Audit-write failures are reported in server logs

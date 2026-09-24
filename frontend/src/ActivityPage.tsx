@@ -3,10 +3,11 @@ import {Download,RefreshCw} from 'lucide-react';
 import {api,publicApiUrl} from './api';
 import {useAuth} from './Auth';
 import './activity.css';
+import ActivityManagement from './ActivityManagement';
 
 type EventRow={id:number;username:string;display_name:string;at:string;category:string;action:string;summary:string;outcome:string;source:string;image_name?:string};
 type Visit={id:string;username:string;started_at:string;last_seen_at:string;ended_at?:string;status:string;page:string;foreground_seconds:number};
-type Log={total:number;events:EventRow[];visits:Visit[];summary:{sign_ins:number;images:number;actions:number;foreground_seconds:number;focus:{category:string;count:number}[];top_images:{id:number;name:string;actions:number}[]}};
+type Log={recording_enabled:boolean|null;total:number;events:EventRow[];visits:Visit[];summary:{sign_ins:number;images:number;actions:number;foreground_seconds:number;focus:{category:string;count:number}[];top_images:{id:number;name:string;actions:number}[]}};
 type Owner={id:number;username:string;display_name:string;status:string};
 const localDay=(daysAgo=0)=>{const d=new Date();d.setDate(d.getDate()-daysAgo);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const at=(date?:string)=>date?new Date(date).toLocaleString():'—';
@@ -29,8 +30,10 @@ export default function ActivityPage({initialUserId}:{initialUserId?:number}){
   },[query,offset,revision,valid]);
   const reset=()=>setOffset(0);
   return <section className="activityPage"><div className="activityHeading"><div><div className="authEyebrow">{admin?'ADMINISTRATION':'MY WORKSPACE'}</div><h1>Activity log</h1><p>Dated summaries of sign-ins, images, actions, and time in the application.</p></div><button className="ghost" onClick={()=>setRevision(v=>v+1)}><RefreshCw size={16}/> Refresh</button></div>
-    <p className="activityDisclosure">Work actions are recorded for administrator review. Times below use {Intl.DateTimeFormat().resolvedOptions().timeZone}. Browser events are reported by the app; server events confirm requests. No passwords or note contents are logged.</p>
+    <p className="activityDisclosure">When recording is enabled, work actions are recorded for administrator review. Times below use {Intl.DateTimeFormat().resolvedOptions().timeZone}. Browser events are reported by the app; server events confirm requests. No passwords or note contents are logged.</p>
     <div className="activityFilters">{admin&&<label>User<select value={owner} onChange={e=>{setOwner(e.target.value);reset()}}><option value="">All users</option>{owners.map(item=><option key={item.id} value={item.id}>{item.display_name} (@{item.username}){item.status==='Active'?'':` · ${item.status}`}</option>)}</select></label>}<label>From<input type="date" value={from} onChange={e=>{setFrom(e.target.value);reset()}}/></label><label>Through<input type="date" value={to} onChange={e=>{setTo(e.target.value);reset()}}/></label><label>Action type<select value={category} onChange={e=>{setCategory(e.target.value);reset()}}><option value="">All actions</option>{categories.map(item=><option key={item}>{item}</option>)}</select></label></div>
+    {admin&&<ActivityManagement owner={owner} since={valid?params.get('since')??undefined:undefined} until={valid?params.get('until')??undefined:undefined} revision={revision} onChanged={()=>{setRevision(v=>v+1);reset()}} onSelect={id=>{setOwner(id);reset()}}/>}
+    {data?.recording_enabled===false&&<p className="activityDisclosure">Recording is turned off for this account. Previously stored activity is still shown.</p>}
     {!valid&&<p className="authError">Choose a valid start and end date.</p>}{error&&<p className="authError" role="alert">{error}</p>}
     {loading?<p role="status">Loading activity…</p>:data&&<>
       <div className="activitySummary"><span><b>{data.summary.sign_ins}</b> successful sign-ins</span><span><b>{data.summary.images}</b> images involved</span><span><b>{data.summary.actions}</b> recorded events</span><span><b>{duration(data.summary.foreground_seconds)}</b> estimated foreground time</span></div>

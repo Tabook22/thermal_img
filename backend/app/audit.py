@@ -11,7 +11,14 @@ from .models import ActivityEvent, ActivityVisit, ThermalImage, User
 
 logger = logging.getLogger(__name__)
 
+def recording_enabled(db, user_id):
+    # Read the column, not a potentially stale User in the session identity map.
+    return db.scalar(select(User.activity_logging_enabled).where(User.id == user_id)) is True
+
+
 def add_event(db, user_id, action, category, summary, *, image=None, outcome="success", source="server", at=None):
+    if not recording_enabled(db, user_id):
+        return None
     event=ActivityEvent(user_id=user_id,action=action,category=category,summary=summary[:300],outcome=outcome,source=source,
                         occurred_at=at or datetime.utcnow(),image_id=image.id if image else None,
                         image_name=image.original_name if image else None,inspection_id=image.inspection_id if image else None)

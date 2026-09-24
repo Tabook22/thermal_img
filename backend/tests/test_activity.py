@@ -98,3 +98,68 @@ def test_exports_preserve_dates_scope_and_escape_spreadsheet_formulas(workspace)
     text=alice.get(f"/api/activity/export?{query}&format=txt")
     assert text.status_code==200 and "@alice" in text.text and "@admin" not in text.text
     assert "no-store" in text.headers["cache-control"]
+
+
+def test_recording_controls_admin_only_and_resume(workspace):
+    factory,engine,_=workspace
+    admin=factory('admin');bob=factory('bob');alice=factory('alice')
+    assert bob.get('/api/activity/management').status_code==403
+    assert bob.put('/api/activity/management/3',json={'enabled':False}).status_code==403
+    vid=str(uuid4());payload={'visit_id':vid,'sequence':1,'page':'workspace','image_id':1}
+    bob.post('/api/activity/presence',json=payload)
+    assert admin.put('/api/activity/management/3',json={'enabled':False}).status_code==200
+    before=bob.get('/api/activity/log').json()
+    assert before['recording_enabled'] is False
+    assert before['visits'][0]['status']=='Recording disabled by administrator'
+    assert bob.post('/api/activity/events',json={'action':'undo','image_id':1}).json()['recorded'] is False
+    assert bob.post('/api/activity/presence',json={**payload,'sequence':2}).json()['enabled'] is False
+    assert bob.get('/api/images/1/workspace').status_code==200
+    bob.post('/api/auth/logout');bob=factory('bob')
+    assert bob.get('/api/activity/log').json()['total']==before['total']
+    # Unaffected accounts still record.
+    assert alice.post('/api/activity/events',json={'action':'undo'}).json()['recorded'] is True
+    assert admin.put('/api/activity/management/3',json={'enabled':True}).status_code==200
+    new_payload={**payload,'visit_id':str(uuid4())}
+    assert bob.post('/api/activity/presence',json=new_payload).json()['recorded'] is True
+    assert bob.get('/api/images/1/workspace').status_code==200
+    after=bob.get('/api/activity/log').json()
+    assert after['total']==before['total']+2
+    assert len(after['visits'])==2
+    row=next(u for u in admin.get('/api/activity/management').json() if u['id']==3)
+    assert row['enabled'] and row['events']==after['total'] and row['visits']==2
+
+
+def test_cleanup_requires_admin_confirmation_and_preserves_work(workspace):
+    from app.models import ThermalImage,Inspection,User
+    factory,engine,_=workspace
+    admin=factory('admin');bob=factory('bob');alice=factory('alice')
+    old=datetime(2026,1,2)
+    with Session(engine) as db:
+        for uid in (2,3):
+            db.add(ActivityEvent(user_id=uid,occurred_at=old,action='undo',category='editing',summary='Undo'))
+            db.add(ActivityVisit(id=str(uuid4()),user_id=uid,session_hash='test',started_at=old,last_seen_at=old,ended_at=old))
+        db.commit()
+    body={'user_id':3,'since':'2026-01-01T00:00:00Z','until':'2026-01-03T00:00:00Z'}
+    assert factory().post('/api/activity/cleanup/preview',json=body).status_code==401
+    assert alice.post('/api/activity/cleanup/preview',json=body).status_code==403
+    assert bob.post('/api/activity/cleanup',json={**body,'confirm':True}).status_code==403
+    assert admin.post('/api/activity/cleanup',json=body).status_code==422
+    assert admin.post('/api/activity/cleanup',json={**body,'confirm':False}).status_code==422
+    assert admin.post('/api/activity/cleanup/preview',json={**body,'user_id':999}).status_code==404
+    preview=admin.post('/api/activity/cleanup/preview',json=body).json()
+    assert preview['events']==1 and preview['visits']==1
+    assert admin.post('/api/activity/cleanup',json={**preview,'confirm':True}).json()=={'events':1,'visits':1}
+    with Session(engine) as db:
+        assert db.get(ThermalImage,1) and db.get(Inspection,1) and db.get(User,3)
+        assert db.scalar(select(ActivityEvent).where(ActivityEvent.user_id==2,ActivityEvent.occurred_at==old))
+        assert db.scalar(select(ActivityVisit).where(ActivityVisit.user_id==2))
+        assert db.scalar(select(ActivityEvent).where(ActivityEvent.action=='activity_cleanup'))
+    # Deleted accounts remain manageable; scope supports all users and a fixed preview cutoff.
+    admin.delete('/api/admin/users/3')
+    assert any(u['id']==3 and u['deleted'] for u in admin.get('/api/activity/management').json())
+    all_scope={'user_id':None,'since':'1970-01-01T00:00:00Z','until':'2099-01-01T00:00:00Z'}
+    preview=admin.post('/api/activity/cleanup/preview',json=all_scope).json()
+    alice.post('/api/activity/events',json={'action':'redo'})
+    admin.post('/api/activity/cleanup',json={**preview,'confirm':True})
+    assert any(e['action']=='redo' for e in alice.get('/api/activity/log').json()['events'])
+    assert bob.get('/api/inspections').status_code==401  # deleted account remains revoked

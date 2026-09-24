@@ -8,9 +8,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
-from .audit import add_event
+from .audit import add_event, end_visits, recording_enabled
 from .database import get_db
 from .models import ActivityEvent, ActivityVisit, Inspection, ThermalImage, User
 
@@ -55,6 +55,7 @@ class Presence(BaseModel):
 @router.post("/presence")
 def presence(body:Presence, request:Request, db:Session=Depends(get_db)):
     user=actor();image=owned_image(db,body.image_id);now=datetime.utcnow()
+    if not recording_enabled(db,user.id):return {"recorded":False,"enabled":False}
     expire_visits(db,user.id)
     key=hashlib.sha256(request.cookies.get("thermal_session","").encode()).hexdigest()
     visit=db.get(ActivityVisit,str(body.visit_id))
@@ -98,8 +99,8 @@ def browser_event(body:BrowserEvent, db:Session=Depends(get_db)):
     if body.detail not in valid:raise HTTPException(422,"Unknown activity detail")
     summaries={"tool_selected":f"Selected tool: {body.detail}","local_edit":body.detail,"undo":"Undo last action","redo":"Redo last action",
                "image_close":"Closed image workspace","display_change":f"Adjusted {body.detail.lower()}"}
-    add_event(db,actor().id,body.action,"editing",summaries[body.action],image=image,source="browser")
-    db.commit();return {"recorded":True}
+    event=add_event(db,actor().id,body.action,"editing",summaries[body.action],image=image,source="browser")
+    db.commit();return {"recorded":event is not None}
 
 def utc(value):
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value and value.tzinfo else value
@@ -142,7 +143,7 @@ def activity_log(user_id:int|None=None,since:datetime|None=None,until:datetime|N
     if uid is not None:visits=visits.where(ActivityVisit.user_id==uid)
     visit_rows=db.execute(visits.order_by(ActivityVisit.started_at.desc()).limit(30)).all()
     durations=db.scalar(select(func.sum(visits.subquery().c.foreground_seconds))) or 0
-    return {"total":total,"events":[event_view(e,u) for e,u in rows],
+    return {"recording_enabled":recording_enabled(db,uid) if uid is not None else None,"total":total,"events":[event_view(e,u) for e,u in rows],
             "summary":{"sign_ins":signins,"images":image_count,"actions":actions,"foreground_seconds":round(durations),
                        "focus":[{"category":c,"count":n} for c,n in focus],
                        "top_images":[{"id":i,"name":name,"actions":n} for i,name,n in top_images]},
@@ -171,3 +172,81 @@ def export_log(user_id:int|None=None,since:datetime|None=None,until:datetime|Non
     filename=f"thermal-activity-{uid if uid is not None else 'all'}-{start:%Y%m%d}.{format}"
     return Response(out.getvalue().encode("utf-8-sig" if writer else "utf-8"),media_type="text/csv" if writer else "text/plain",
                     headers={"Content-Disposition":f'attachment; filename="{filename}"'})
+
+
+def administrator():
+    user=actor()
+    if user.role != "admin":raise HTTPException(403,"Only an administrator can manage activity logs")
+    return user
+
+
+@router.get("/management")
+def management(db:Session=Depends(get_db)):
+    administrator()
+    events=dict(db.execute(select(ActivityEvent.user_id,func.count()).group_by(ActivityEvent.user_id)).all())
+    visits=dict(db.execute(select(ActivityVisit.user_id,func.count()).group_by(ActivityVisit.user_id)).all())
+    return [{"id":u.id,"username":u.username,"display_name":u.display_name,"deleted":u.is_deleted,
+             "enabled":u.activity_logging_enabled,"events":events.get(u.id,0),"visits":visits.get(u.id,0)}
+            for u in db.scalars(select(User).order_by(User.username))]
+
+
+class RecordingSetting(BaseModel):
+    enabled: bool
+
+
+@router.put("/management/{user_id}")
+def set_recording(user_id:int,body:RecordingSetting,db:Session=Depends(get_db)):
+    admin=administrator();user=db.get(User,user_id)
+    if user is None:raise HTTPException(404,"User not found")
+    if user.activity_logging_enabled != body.enabled:
+        user.activity_logging_enabled=body.enabled
+        db.flush()
+        if not body.enabled:end_visits(db,user.id,"Recording disabled by administrator")
+        add_event(db,admin.id,"activity_recording","account",f"{'Enabled' if body.enabled else 'Disabled'} activity recording for @{user.username}")
+        db.commit()
+    return {"enabled":user.activity_logging_enabled}
+
+
+class CleanupScope(BaseModel):
+    # Explicit scope and dates are required: no accidental default to all history.
+    user_id: int | None = Field(...,ge=1)
+    since: datetime
+    until: datetime
+
+
+class CleanupConfirmation(CleanupScope):
+    confirm: Literal[True]
+
+
+def cleanup_queries(body,db):
+    if body.user_id is not None and db.get(User,body.user_id) is None:
+        raise HTTPException(404,"User not found")
+    start,end=bounds(body.since,body.until)
+    # A fixed preview boundary keeps subsequent activity out of a confirmed deletion.
+    end=min(end,datetime.utcnow())
+    if start>=end:raise HTTPException(422,"Choose a period before the current time")
+    events=select(ActivityEvent.id).where(ActivityEvent.occurred_at>=start,ActivityEvent.occurred_at<end)
+    visits=select(ActivityVisit.id).where(ActivityVisit.started_at>=start,ActivityVisit.started_at<end)
+    if body.user_id is not None:
+        events=events.where(ActivityEvent.user_id==body.user_id)
+        visits=visits.where(ActivityVisit.user_id==body.user_id)
+    return events,visits,start,end
+
+
+@router.post("/cleanup/preview")
+def preview_cleanup(body:CleanupScope,db:Session=Depends(get_db)):
+    administrator();events,visits,start,end=cleanup_queries(body,db)
+    return {"user_id":body.user_id,"since":stamp(start),"until":stamp(end),
+            "events":db.scalar(select(func.count()).select_from(events.subquery())),
+            "visits":db.scalar(select(func.count()).select_from(visits.subquery()))}
+
+
+@router.post("/cleanup")
+def cleanup(body:CleanupConfirmation,db:Session=Depends(get_db)):
+    admin=administrator();events,visits,start,end=cleanup_queries(body,db)
+    event_count=db.execute(delete(ActivityEvent).where(ActivityEvent.id.in_(events)),execution_options={"synchronize_session":False}).rowcount
+    visit_count=db.execute(delete(ActivityVisit).where(ActivityVisit.id.in_(visits)),execution_options={"synchronize_session":False}).rowcount
+    target=db.get(User,body.user_id) if body.user_id is not None else None
+    add_event(db,admin.id,"activity_cleanup","account",f"Deleted {event_count} events and {visit_count} visits for {'@'+target.username if target else 'all users'}; {stamp(start)} to {stamp(end)}")
+    db.commit()
+    return {"events":event_count,"visits":visit_count}
