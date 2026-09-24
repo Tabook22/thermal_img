@@ -3,18 +3,6 @@ import {api} from './api';
 import './inspection-bridge.css';
 
 type Link={title:string;return_path:string;external_image_id:number;expires_at:string};
-let opening:Promise<any>|undefined;
-let openingUser:number|undefined;
-export function openInspectionImage(userId:number){
-  if(opening&&openingUser===userId)return opening;
-  openingUser=userId;opening=undefined;
-  const ticket=new URLSearchParams(location.hash.slice(1)).get('inspection');
-  const existing=new URLSearchParams(location.search).get('inspection_image');
-  if(!ticket&&!existing)return null;
-  const request=ticket?api<any>('/api/inspection-bridge/open',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket})}):api<any>(`/api/inspection-bridge/images/${encodeURIComponent(existing!)}`);
-  opening=request.then(result=>{history.replaceState(null,'',`${import.meta.env.BASE_URL}?inspection_image=${result.image.id}`);return result});
-  return opening;
-}
 
 export default function InspectionBridge({imageId,payload,ready,onSaved}:{imageId?:number;payload:unknown;ready:boolean;onSaved:()=>void}){
   const [link,setLink]=useState<Link|null>(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');
