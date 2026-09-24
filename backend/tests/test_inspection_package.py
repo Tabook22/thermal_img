@@ -1,4 +1,5 @@
 import asyncio
+import io
 import hashlib
 from pathlib import Path
 from zipfile import ZipFile
@@ -46,6 +47,7 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
             db.add(analysis); db.flush()
             db.add(Region(analysis_id=analysis.id,name="Insulator",kind="rectangle",geometry_json={"points":[{"x":2,"y":2},{"x":20,"y":20}],"minimum_selection":None},stats_json=analysis.stats_json,is_reference=False)); db.commit()
             workspace = ExportWorkspace(insulator_label="inner", insulator_label_x=.35, insulator_label_y=.2, insulator_label_width=.3, guide_overlays=[{"id":"guide-1","x":.5,"y":.1,"width":.25,"height":.3,"zoom":1.5},{"id":"guide-2","x":.1,"y":.5,"width":.2,"height":.25,"zoom":2}], probes=[{"x":10,"y":10,"temperature_c":30.0}], notes=[{"id":"note-1","text":"Inspect","x":.1,"y":.1}])
+            workspace = ExportWorkspace.model_validate({**workspace.model_dump(),"crop":{"x":.25,"y":.25,"width":.5,"height":.5}})
             response = export_editable_package(image.id, workspace, db)
             package_path = Path(response.path)
             with ZipFile(package_path) as archive:
@@ -55,6 +57,7 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
                     np.testing.assert_array_equal(saved["temperatures"], temperatures)
                     np.testing.assert_array_equal(saved["valid_mask"], valid)
                 assert archive.read(manifest["files"]["report"]).startswith(b"\x89PNG")
+                assert Image.open(io.BytesIO(archive.read(manifest["files"]["report"]))).size == (16,12)
                 assert archive.read(manifest["files"]["guides"]["guide-1"]).startswith(b"\x89PNG")
                 assert archive.read(manifest["files"]["guides"]["guide-2"]).startswith(b"\x89PNG")
 
@@ -65,6 +68,7 @@ def test_package_preserves_source_matrix_and_restores_workspace(tmp_path: Path):
             assert (tmp_path / restored_image.storage_name).read_bytes() == original.read_bytes()
             assert restored_image.metadata_json["workspace"]["probes"][0]["temperature_c"] == 30.0
             assert restored_image.metadata_json["workspace"]["insulator_label"] == "inner"
+            assert restored_image.metadata_json["workspace"]["crop"] == workspace.crop.model_dump()
             assert restored_image.metadata_json["workspace"]["insulator_label_x"] == .35
             assert restored_image.metadata_json["workspace"]["insulator_label_width"] == .3
             assert restored_image.metadata_json["workspace"]["guide_overlays"][0]["width"] == .25

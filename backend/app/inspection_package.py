@@ -48,7 +48,21 @@ class ExportNote(ImageNoteInput):
     id: str = Field(max_length=64)
 
 
+class ImageCrop(BaseModel):
+    x: float = Field(ge=0, lt=1, allow_inf_nan=False)
+    y: float = Field(ge=0, lt=1, allow_inf_nan=False)
+    width: float = Field(gt=0, le=1, allow_inf_nan=False)
+    height: float = Field(gt=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def within_image(self):
+        if self.x + self.width > 1 + 1e-9 or self.y + self.height > 1 + 1e-9:
+            raise ValueError("Crop must stay inside the original image")
+        return self
+
+
 class ExportWorkspace(BaseModel):
+    crop: ImageCrop | None = None
     enhancement: EnhancementSettings = Field(default_factory=EnhancementSettings)
     insulator_label: Literal["inner", "outer"] | None = None
     insulator_label_x: float = Field(0.81, ge=0, le=1)
@@ -222,6 +236,12 @@ def render_report_png(
         draw.multiline_text((x,y),text,font=note_font,fill=note.text_color or "#111820",spacing=3)
 
     output = Image.alpha_composite(image, overlay).convert("RGB")
+    if workspace.crop:
+        crop = workspace.crop
+        left, top = math.floor(crop.x * width), math.floor(crop.y * height)
+        right = min(width, max(left + 1, math.ceil((crop.x + crop.width) * width)))
+        bottom = min(height, max(top + 1, math.ceil((crop.y + crop.height) * height)))
+        output = output.crop((left, top, right, bottom))
     buffer = io.BytesIO(); output.save(buffer, "PNG", optimize=True)
     return buffer.getvalue()
 

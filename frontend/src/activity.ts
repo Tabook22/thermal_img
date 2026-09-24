@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {api,apiFetch} from './api';
 
-export const LOCAL_ACTIVITY=new Set(['Add temperature marker','Move temperature marker','Delete temperature marker','Move insulator label','Resize insulator label','Add inner insulator label','Add outer insulator label','Remove inner insulator label','Remove outer insulator label','Move supporting image','Resize supporting image','Zoom supporting image','Remove supporting image']);
+export const LOCAL_ACTIVITY=new Set(['Crop image','Remove image crop','Add temperature marker','Move temperature marker','Delete temperature marker','Move insulator label','Resize insulator label','Add inner insulator label','Add outer insulator label','Remove inner insulator label','Remove outer insulator label','Move supporting image','Resize supporting image','Zoom supporting image','Remove supporting image']);
 export function recordActivity(action:'tool_selected'|'local_edit'|'undo'|'redo'|'image_close'|'display_change',imageId?:number,detail=''){
   void api('/api/activity/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,image_id:imageId??null,detail})}).catch(()=>{window.dispatchEvent(new Event('thermal-activity-error'))});
 }

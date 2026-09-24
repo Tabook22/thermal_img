@@ -87,7 +87,7 @@ class BrowserEvent(BaseModel):
     detail: str = Field("",max_length=100)
 
 TOOLS={"select","rectangle","circle","line-temperature","point","spot","note","delete","draw-freehand","draw-line","draw-ellipse","draw-arrow","bend-arrow"}
-LOCAL_EDITS={"Add temperature marker","Move temperature marker","Delete temperature marker","Move insulator label","Resize insulator label",
+LOCAL_EDITS={"Crop image","Remove image crop","Add temperature marker","Move temperature marker","Delete temperature marker","Move insulator label","Resize insulator label",
              "Add inner insulator label","Add outer insulator label","Remove inner insulator label","Remove outer insulator label",
              "Move supporting image","Resize supporting image","Zoom supporting image","Remove supporting image"}
 DISPLAY={"Temperature marker visibility","Measurement filter","Image zoom","Show original image","Compare enhancement"}

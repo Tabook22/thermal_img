@@ -1,4 +1,6 @@
 import hashlib
+import io
+from PIL import Image
 from datetime import datetime,timedelta
 import httpx
 from fastapi import HTTPException
@@ -23,11 +25,14 @@ def test_import_resume_save_and_private_workspace(workspace,monkeypatch):
     assert 'ticket' not in str(data) and data['link']['return_path']=='/visits/34'
     assert alice.get(f'/api/inspection-bridge/images/{image_id}').status_code==404
     assert alice.post(f'/api/inspection-bridge/images/{image_id}/save',json={}).status_code==404
-    assert bob.post(f'/api/inspection-bridge/images/{image_id}/save',json={'insulator_label':'inner'}).status_code==200
+    crop={'x':.25,'y':.25,'width':.5,'height':.5}
+    assert bob.post(f'/api/inspection-bridge/images/{image_id}/save',json={'insulator_label':'inner','crop':crop}).status_code==200
     assert sent[0].startswith(b'\x89PNG')
+    assert Image.open(io.BytesIO(sent[0])).size==(10,10)
     resumed=bob.post('/api/inspection-bridge/open',json={'ticket':'b'*43}).json()
     assert resumed['image']['id']==image_id
     assert bob.get(f'/api/images/{image_id}/workspace').json()['insulator_label']=='inner'
+    assert bob.get(f'/api/images/{image_id}/workspace').json()['crop']==crop
     with Session(engine) as db:
         image=db.get(ThermalImage,image_id);assert (root/image.storage_name).read_bytes()==content
         link=db.scalar(select(InspectionImageLink));link.expires_at=datetime.utcnow()-timedelta(seconds=1);db.commit()
