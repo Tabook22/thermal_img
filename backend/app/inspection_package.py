@@ -31,6 +31,22 @@ class MarkerVisibility(BaseModel):
     minimum: bool = True
 
 
+class MaximumRing(BaseModel):
+    # Presentation only: offsets/radius are fractions of image width.
+    dx: float = Field(0, ge=-.25, le=.25, allow_inf_nan=False)
+    dy: float = Field(0, ge=-.25, le=.25, allow_inf_nan=False)
+    radius: float = Field(.02, ge=.008, le=.25, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def keep_hot_pixel_inside(self):
+        distance = math.hypot(self.dx, self.dy)
+        limit = self.radius * .85
+        if distance > limit:
+            self.dx *= limit / distance
+            self.dy *= limit / distance
+        return self
+
+
 class GuideOverlay(BaseModel):
     id: str = Field(min_length=1, max_length=64)
     x: float = Field(0.62, ge=0, le=1)
@@ -62,6 +78,7 @@ class ImageCrop(BaseModel):
 
 
 class ExportWorkspace(BaseModel):
+    maximum_rings: dict[str, MaximumRing] = Field(default_factory=dict, max_length=501)
     crop: ImageCrop | None = None
     enhancement: EnhancementSettings = Field(default_factory=EnhancementSettings)
     insulator_label: Literal["inner", "outer"] | None = None
@@ -80,6 +97,8 @@ class ExportWorkspace(BaseModel):
 
     @model_validator(mode="after")
     def valid_range(self):
+        if any(not re.fullmatch(r"full|region:[0-9]{1,20}", key) for key in self.maximum_rings):
+            raise ValueError("Unknown maximum circle target")
         if not math.isfinite(self.range_min) or not math.isfinite(self.range_max) or self.range_min >= self.range_max:
             raise ValueError("Temperature range minimum must be below maximum")
         return self
@@ -158,10 +177,22 @@ def render_report_png(
     def pixel(point: dict) -> tuple[float, float]:
         return ((float(point["x"]) + .5) * sx, (float(point["y"]) + .5) * sy)
 
-    def marker(point: dict | None, value: float | None, letter: str, color: str) -> None:
+    def marker(point: dict | None, value: float | None, letter: str, color: str, ring_key: str | None = None) -> None:
         if not point or value is None:
             return
         x, y = pixel(point)
+        if ring_key is not None:
+            ring = workspace.maximum_rings.get(ring_key, MaximumRing())
+            radius = ring.radius * width
+            cx, cy = x + ring.dx * width, y + ring.dy * width
+            draw.ellipse((cx-radius, cy-radius, cx+radius, cy+radius), outline="#ff503c", width=max(2, round(width/320)))
+            draw.line((x-3, y, x+3, y), fill="white", width=1)
+            draw.line((x, y-3, x, y+3), fill="white", width=1)
+            text = f"H {value:.1f}°C"
+            label_width = draw.textbbox((0, 0), text, font=small)[2]
+            label_x = x + 23 if x <= width * .65 else x - 23 - label_width
+            draw.text((label_x, y), text, font=small, anchor="lm", fill="white", stroke_width=1, stroke_fill="#071015")
+            return
         radius = max(8, width / 80)
         draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill="#0b151a", outline=color, width=max(2, round(width/320)))
         draw.text((x, y), letter, font=small, fill="white", anchor="mm")
@@ -189,7 +220,7 @@ def render_report_png(
         _label(draw, (coords[0][0], max(2, coords[0][1]-font.size-8)), region.get("name", "Area"), "#ffd35a", small)
         stat = region.get("statistics") or {}
         if workspace.temperature_visibility.maximum:
-            marker(stat.get("maximum_location"), stat.get("maximum_c"), "H", "#ff7b2b")
+            marker(stat.get("maximum_location"), stat.get("maximum_c"), "H", "#ff7b2b", f"region:{region.get('id')}")
         if workspace.temperature_visibility.minimum:
             chosen = region.get("minimum_selection") or stat.get("minimum_location")
             value = chosen.get("temperature_c") if isinstance(chosen, dict) and "temperature_c" in chosen else stat.get("minimum_c")
@@ -197,7 +228,7 @@ def render_report_png(
 
     if not regions and analysis_stats:
         if workspace.temperature_visibility.maximum:
-            marker(analysis_stats.get("maximum_location"), analysis_stats.get("maximum_c"), "H", "#ff7b2b")
+            marker(analysis_stats.get("maximum_location"), analysis_stats.get("maximum_c"), "H", "#ff7b2b", "full")
         if workspace.temperature_visibility.minimum:
             marker(analysis_stats.get("minimum_location"), analysis_stats.get("minimum_c"), "L", "#35b9ff")
 

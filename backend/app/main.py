@@ -565,6 +565,7 @@ async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db
             image=ThermalImage(inspection_id=inspection_id,original_name=original_name,storage_name=storage_name,sha256=digest.hexdigest(),classification=source.get("classification") or ("pending_decoder" if sig=="jpeg" else "ordinary_image"),camera_model=source.get("camera_model"),camera_latitude=source.get("camera_latitude"),camera_longitude=source.get("camera_longitude"),metadata_json=metadata)
             db.add(image); db.flush(); imported_analysis=None
             saved_analysis=manifest.get("analysis"); matrix_member=files.get("matrix")
+            restored_rings={key:ring for key,ring in workspace.maximum_rings.items() if key=="full"}
             if saved_analysis and matrix_member:
                 matrix_bytes=archive.read(matrix_member)
                 expected_matrix=(manifest.get("checksums") or {}).get("matrix_sha256")
@@ -578,7 +579,12 @@ async def import_editable_package(inspection_id:int,file:UploadFile=File(...),db
                 for saved_region in manifest.get("regions") or []:
                     validated=RegionCreate.model_validate({"name":saved_region.get("name"),"kind":saved_region.get("kind"),"points":saved_region.get("points"),"is_reference":bool(saved_region.get("is_reference")),"minimum_point":saved_region.get("minimum_selection")})
                     points=[p.model_dump() for p in validated.points]; mask=region_mask(matrix.shape,validated.kind,points); selected=minimum_selection(matrix,valid,mask,validated.minimum_point.model_dump() if validated.minimum_point else None)
-                    db.add(Region(analysis_id=imported_analysis.id,name=validated.name,kind=validated.kind,geometry_json={"points":points,"minimum_selection":selected},stats_json=statistics(matrix,valid&mask),is_reference=validated.is_reference))
+                    restored_region=Region(analysis_id=imported_analysis.id,name=validated.name,kind=validated.kind,geometry_json={"points":points,"minimum_selection":selected},stats_json=statistics(matrix,valid&mask),is_reference=validated.is_reference)
+                    db.add(restored_region); db.flush()
+                    saved_ring=workspace.maximum_rings.get(f"region:{saved_region.get('id')}")
+                    if saved_ring is not None: restored_rings[f"region:{restored_region.id}"]=saved_ring
+            workspace.maximum_rings=restored_rings
+            image.metadata_json={**image.metadata_json,"workspace":workspace.model_dump()}
             db.commit()
             return {"id":image.id,"name":image.original_name,"classification":image.classification,"sha256":image.sha256,"preview_url":f"/api/images/{image.id}/preview","latest_analysis":analysis_dict(imported_analysis) if imported_analysis else None}
     except (BadZipFile,KeyError,ValueError,json.JSONDecodeError) as exc:
