@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     inspection_origin: str = "https://skygreenline-lab.io"
     openai_api_key: str | None = None
     openai_web_model: str = "gpt-4.1-mini"
+    openai_enhancement_model: str = "gpt-4.1"
     model_config = SettingsConfigDict(env_file=BACKEND_ROOT / ".env", extra="ignore")
 
 settings = Settings()

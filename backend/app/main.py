@@ -25,6 +25,7 @@ from .branding import BrandingSettings, logo_path, public_branding, save_brandin
 from .conversation_pdf import render_conversation_pdf, render_conversation_text
 from .dji_palette import official_palette_luts
 from .enhancement import EnhancementSettings, auto_settings, render_enhancement
+from .ai_enhancement import AIEnhancementRequest, propose, request_slot
 from .database import get_db, SessionLocal
 from .image_metadata import capture_note_text, extract_capture_metadata
 from .image_details import original_image_details
@@ -328,6 +329,28 @@ def get_enhancement(image_id:int,db:Session=Depends(get_db)):
     item=db.get(ThermalImage,image_id)
     if not item: fail(404,"image_not_found","Image not found")
     return EnhancementSettings.model_validate((item.metadata_json or {}).get("enhancement",{}))
+
+
+@app.get("/api/ai-enhancement/status")
+def ai_enhancement_status():
+    return {"available": bool(settings.openai_api_key), "provider": "OpenAI"}
+
+
+@app.post("/api/images/{image_id}/enhancement/ai")
+def ai_enhancement(image_id:int, body:AIEnhancementRequest, db:Session=Depends(get_db)):
+    if not settings.openai_api_key:
+        fail(503,"ai_not_configured","AI enhancement is not connected yet. Ask your administrator to configure the server's OpenAI API key.")
+    rgb,_,_=enhancement_source(image_id,body.analysis_id,db)
+    try:
+        with request_slot(active_user().id):
+            message,proposed=propose(rgb,body,settings.openai_api_key,settings.openai_enhancement_model)
+        return {"message":message,"settings":proposed}
+    except RuntimeError as exc:
+        fail(429,"ai_busy",str(exc))
+    except ValueError as exc:
+        from pydantic import ValidationError
+        message="AI could not produce a valid outline. Try describing the target more precisely or draw its focus area first." if isinstance(exc,ValidationError) else str(exc)
+        fail(502,"ai_proposal_failed",message)
 
 
 @app.put("/api/images/{image_id}/enhancement")

@@ -7,7 +7,7 @@ from typing import Literal
 import cv2
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from .insulator_focus import InsulatorFocus, enhance_insulator
+from .insulator_focus import InsulatorFocus, enhance_insulator, focus_mask
 
 
 DJI_PALETTES = ("white_hot", "fulgurite", "iron_red", "hot_iron", "medical", "arctic",
@@ -40,6 +40,8 @@ class EnhancementSettings(BaseModel):
     highlight_low: float | None = None
     highlight_high: float | None = None
     focus: InsulatorFocus | None = None
+    # Display-only areas hidden by the assistant; source and matrix stay intact.
+    concealed_areas: list[InsulatorFocus] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def ordered_ranges(self):
@@ -132,6 +134,8 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
     if s.palette != "original":
         display_mask = cv2.resize(mask.astype(np.uint8), (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST).astype(bool)
         result[~display_mask] = 0
+    for area in s.concealed_areas:
+        result[focus_mask(result.shape, area).astype(bool)] = 0
     ok, png = cv2.imencode(".png", cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
     if not ok:
         raise ValueError("Could not render the enhanced image")
@@ -143,7 +147,7 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
     return {"preview": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
             "low": low, "high": high, "legend": legend,
             "width": int(rgb.shape[1]), "height": int(rgb.shape[0]), "focus_info": focus_info,
-            "quantitative_legend": not bool(s.local_contrast or s.denoise or s.sharpen or s.highlight or s.focus)}
+            "quantitative_legend": not bool(s.local_contrast or s.denoise or s.sharpen or s.highlight or s.focus or s.concealed_areas)}
 
 
 def auto_settings(rgb: np.ndarray, matrix=None, valid=None) -> EnhancementSettings:

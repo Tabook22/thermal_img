@@ -20,7 +20,7 @@ class InsulatorFocus(BaseModel):
     clarity: float = Field(default=.65, ge=0, le=1)
     detail: float = Field(default=.5, ge=0, le=1)
     shadows: float = Field(default=.25, ge=0, le=1)
-    background_dim: float = Field(default=0, ge=0, le=.8)
+    background_dim: float = Field(default=0, ge=0, le=1)
 
     @model_validator(mode="after")
     def nonempty_polygon(self):

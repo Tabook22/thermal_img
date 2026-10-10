@@ -58,6 +58,7 @@ def action_for(path, method):
         "/api/images/{image_id}/workspace":("draft_save","image","Saved image workspace"),
         "/api/images/{image_id}/enhancement/preview":("enhancement_preview","enhancement","Previewed enhancement adjustments"),
         "/api/images/{image_id}/enhancement/auto":("auto_enhance","enhancement","Applied automatic enhancement"),
+        "/api/images/{image_id}/enhancement/ai":("ai_enhancement","enhancement","Requested AI display enhancement proposal"),
         "/api/images/{image_id}/enhancement":("enhancement_save","enhancement","Saved enhancement settings"),
         "/api/images/{image_id}/exports/report":("report_export","export","Exported report image"),
         "/api/images/{image_id}/exports/package":("package_export","export","Exported editable inspection package"),

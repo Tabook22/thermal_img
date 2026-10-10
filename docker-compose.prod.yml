@@ -18,6 +18,7 @@ services:
       INSPECTION_ORIGIN: https://skygreenline-lab.io
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_WEB_MODEL: ${OPENAI_WEB_MODEL:-gpt-4.1-mini}
+      OPENAI_ENHANCEMENT_MODEL: ${OPENAI_ENHANCEMENT_MODEL:-gpt-4.1}
     ports:
       - "127.0.0.1:8003:8000"
     volumes:
