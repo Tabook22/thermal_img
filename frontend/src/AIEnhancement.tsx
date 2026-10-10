@@ -31,7 +31,7 @@ export default function AIEnhancement({image,control:c}:{image?:ImageInput;contr
  const manual=()=>{setDrawing(true);setError('');setApplied(false);setProposal(null);setPreview('');setBase('')};
  const previewFocus=async(points:FocusPoint[])=>{
   if(!image)return;
-  const controller=new AbortController();request.current=controller;setBusy(true);setError('');
+  const controller=new AbortController();request.current=controller;setBusy(true);setError('');setApplied(false);
   const next:EnhancementSettings={...c.settings,focus:{...newFocus(points,c.settings.focus),background_dim:1},concealed_areas:[]};
   try{
    const rendered=await api<{preview:string}>(`/api/images/${image.id}/enhancement/preview`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:next,analysis_id:c.analysis?.status==='completed'?c.analysis.id:null})});
