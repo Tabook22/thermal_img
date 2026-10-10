@@ -131,3 +131,22 @@ def test_missing_key_and_network_error(workspace, monkeypatch):
     response = client.post(URL + "/test")
     assert response.status_code == 502 and KEY not in response.text
     assert ai_settings.read_api_key() == KEY
+
+
+def test_model_choices_preserve_saved_custom_model_and_key(workspace):
+    client = workspace[0]("admin")
+    custom = "account-specific-vision-model"
+    assert client.put(URL, json={"api_key": KEY, "model": custom}).status_code == 200
+    before = ai_settings.credential_path().read_bytes()
+    status = client.get(URL).json()
+    assert status["model"] == custom
+    for provider in status["providers"]:
+        choices = [model["id"] for model in provider["models"]]
+        assert len(set(choices)) == len(choices) and len(choices) > 1
+        assert provider["default_model"] in choices
+    assert ai_settings.credential_path().read_bytes() == before
+    # Selecting a suggested model reuses the stored key, without sending it again.
+    alternative = next(p for p in status["providers"] if p["id"] == "openai")["models"][1]["id"]
+    response = client.put(URL, json={"provider": "openai", "model": alternative})
+    assert response.status_code == 200 and response.json()["model"] == alternative
+    assert ai_settings.read_api_key() == KEY and KEY not in response.text

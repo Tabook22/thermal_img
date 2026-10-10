@@ -3,18 +3,19 @@ import {CheckCircle2,Eye,EyeOff,KeyRound,PlugZap,ShieldCheck} from 'lucide-react
 import {api} from './api';
 import './ai-settings.css';
 
-type Provider={id:string;name:string;configured:boolean;model:string;default_model:string};
+type Provider={id:string;name:string;configured:boolean;model:string;default_model:string;models:{id:string;name:string}[]};
 type Status={configured:boolean;provider:string;provider_name:string;model:string;saved_in_env:boolean;providers:Provider[]};
 export default function AISettings(){
  const [status,setStatus]=useState<Status|null>(null),[key,setKey]=useState(''),[show,setShow]=useState(false);
- const [provider,setProvider]=useState('openai'),[model,setModel]=useState('');
+ const [provider,setProvider]=useState('openai'),[model,setModel]=useState(''),[customModel,setCustomModel]=useState(false);
  const [busy,setBusy]=useState<'load'|'save'|'test'|null>('load'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[connected,setConnected]=useState(false);
- const sync=(value:Status)=>{setStatus(value);setProvider(value.provider);setModel(value.model)};
+ const sync=(value:Status)=>{setStatus(value);setProvider(value.provider);setModel(value.model);setCustomModel(!value.providers.find(p=>p.id===value.provider)?.models.some(m=>m.id===value.model))};
  const load=async()=>{setBusy('load');setError('');try{sync(await api<Status>('/api/admin/settings/ai'))}catch(e:any){setError(e.message)}finally{setBusy(null)}};
  useEffect(()=>{void load()},[]);
  const selected=status?.providers.find(p=>p.id===provider);
  const dirty=!!key.trim()||provider!==status?.provider||model.trim()!==status?.model;
- const chooseProvider=(id:string)=>{setProvider(id);setModel(status?.providers.find(p=>p.id===id)?.model||'');setKey('');setShow(false);setError('');setNotice('');setConnected(false)};
+ const chooseProvider=(id:string)=>{const next=status?.providers.find(p=>p.id===id);setProvider(id);setModel(next?.model||'');setCustomModel(!next?.models.some(m=>m.id===next.model));setKey('');setShow(false);setError('');setNotice('');setConnected(false)};
+ const chooseModel=(id:string)=>{setCustomModel(id==='custom');if(id!=='custom')setModel(id);setConnected(false);setError('');setNotice('')};
  const save=async(e:FormEvent)=>{
   e.preventDefault();setBusy('save');setError('');setNotice('');setConnected(false);
   try{
@@ -28,8 +29,16 @@ export default function AISettings(){
   <p>Choose who provides your AI, select a model, and enter that provider’s API key. Your team will use this connection for image enhancement.</p>
   {status?.configured&&<p className="aiActiveProvider">Active: <b>{status.provider_name}</b> · {status.model}</p>}
   <form onSubmit={save} autoComplete="off">
-   <div className="aiProviderFields"><div><label htmlFor="ai-provider">Provider · who issued your key?</label><select id="ai-provider" value={provider} onChange={e=>chooseProvider(e.target.value)} disabled={!!busy||!status}>{status?.providers.map(p=><option value={p.id} key={p.id}>{p.name}{p.configured?' · key saved':''}</option>)}</select></div><div><label htmlFor="ai-model">Model ID</label><input id="ai-model" value={model} list="ai-model-options" onChange={e=>{setModel(e.target.value);setConnected(false);setNotice('')}} disabled={!!busy||!status} required maxLength={120} autoComplete="off" spellCheck={false}/><datalist id="ai-model-options">{selected&&<option value={selected.default_model}/>}</datalist></div></div>
-   <p className="aiKeyHint">Use a model with image understanding and structured output. The suggested model can be replaced with one available to your account.</p>
+   <div className="aiProviderFields"><div><label htmlFor="ai-provider">Provider · who issued your key?</label><select id="ai-provider" value={provider} onChange={e=>chooseProvider(e.target.value)} disabled={!!busy||!status}>{status?.providers.map(p=><option value={p.id} key={p.id}>{p.name}{p.configured?' · key saved':''}</option>)}</select></div><div>
+    <label htmlFor="ai-model">Model</label>
+    <select id="ai-model" value={customModel?'custom':model} onChange={e=>chooseModel(e.target.value)} disabled={!!busy||!status} aria-describedby="ai-model-help">
+     {!status&&<option value="">Loading models…</option>}
+     {selected?.models.map(m=><option key={m.id} value={m.id}>{m.name} · {m.id}</option>)}
+     <option value="custom">Custom model ID…</option>
+    </select>
+    {customModel&&<><label htmlFor="ai-custom-model">Custom model ID</label><input id="ai-custom-model" value={model} onChange={e=>{setModel(e.target.value);setConnected(false);setError('');setNotice('')}} disabled={!!busy||!status} required maxLength={120} autoComplete="off" autoCapitalize="none" spellCheck={false} aria-describedby="ai-model-help"/></>}
+   </div></div>
+   <p id="ai-model-help" className="aiKeyHint">Suggested models support image understanding and structured output. Availability depends on your API account. Choose Custom model ID to use another compatible model.</p>
    <label htmlFor="openai-api-key">{selected?.name||'Provider'} API key {selected?.configured?'· saved (replace only if needed)':''}</label>
    <div className="aiKeyInput"><input id="openai-api-key" type={show?'text':'password'} value={key} onChange={e=>{setKey(e.target.value);setNotice('');setConnected(false)}} placeholder={selected?.configured?'Leave blank to keep this provider’s saved key.':`Paste the API key from ${selected?.name||'your selected provider'}`} autoComplete="new-password" spellCheck={false} autoCapitalize="none" maxLength={1010} disabled={!!busy||!status} required={!selected?.configured}/><button type="button" disabled={!key||!!busy} aria-label={show?'Hide entered API key':'Show entered API key'} onClick={()=>setShow(!show)}>{show?<EyeOff size={18}/>:<Eye size={18}/>}</button></div>
    <p className="aiKeyHint"><ShieldCheck size={15}/>Each provider’s key is saved separately in a private server .env file. Saved keys are never returned to the browser. Changes apply when you save.</p>

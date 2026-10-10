@@ -11,6 +11,28 @@ PROVIDERS = {
     "gemini": {"name": "Google (Gemini)", "default_model": "gemini-3.8-flash", "key_env": "GEMINI_API_KEY"},
 }
 
+# Curated image-input / structured-output choices, not an account access list.
+# Keep defaults stable; administrators explicitly select and save a different model.
+MODEL_CHOICES = {
+    "openai": [
+        {"id": "gpt-4.1", "name": "GPT-4.1"},
+        {"id": "gpt-4.1-mini", "name": "GPT-4.1 mini"},
+        {"id": "gpt-5-mini", "name": "GPT-5 mini"},
+        {"id": "gpt-6-luna", "name": "GPT-6 Luna"},
+        {"id": "gpt-6.1-sol", "name": "GPT-6.1 Sol"},
+    ],
+    "anthropic": [
+        {"id": "claude-sonnet-5-5", "name": "Claude Sonnet 5.5"},
+        {"id": "claude-haiku-5-5", "name": "Claude Haiku 5.5"},
+        {"id": "claude-opus-5-5", "name": "Claude Opus 5.5"},
+    ],
+    "gemini": [
+        {"id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"},
+        {"id": "gemini-3.6-flash", "name": "Gemini 3.6 Flash"},
+        {"id": "gemini-3.5-flash-lite", "name": "Gemini 3.5 Flash-Lite"},
+    ],
+}
+
 
 def valid_model(model):
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", model)) and not model.startswith(("sk-", "AIza"))

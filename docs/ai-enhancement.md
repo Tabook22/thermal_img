@@ -30,9 +30,16 @@ deployment environment values. Missing values fall back to configuration default
 Existing OpenAI-only files remain compatible. The application does not modify the
 root deployment `.env`.
 
-Models must support image understanding and structured output. Suggestions are
-`gpt-4.1`, `claude-sonnet-5-5`, and `gemini-3.8-flash`; admins may enter another
-compatible model ID available to their account. Model settings are saved separately
+Models must support image understanding and structured output. The model selector
+offers several curated choices for each provider, including GPT-4.1/mini, GPT-5 mini,
+GPT-6 Luna and GPT-6.1 Sol; Claude Sonnet/Haiku/Opus 5.5; and Gemini 3.8 Flash,
+3.6 Flash and 3.5 Flash-Lite. These are suggestions, not a list of account permissions.
+Choose **Custom model ID** for another compatible model available to your account.
+Existing saved model IDs (including custom IDs) and keys are preserved; selection
+changes take effect only after saving. Catalog checked on 2026-10-10 against
+[OpenAI](https://developers.openai.com/api/docs/models),
+[Anthropic](https://platform.claude.com/docs/en/models/overview), and
+[Google](https://ai.google.dev/gemini-api/docs/models). Model settings are saved separately
 as `OPENAI_ENHANCEMENT_MODEL`, `ANTHROPIC_ENHANCEMENT_MODEL`, and
 `GEMINI_ENHANCEMENT_MODEL`. Account access and actual image quality require live testing.
 Existing online reference search continues to use the separately saved OpenAI key

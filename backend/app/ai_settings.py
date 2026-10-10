@@ -14,7 +14,7 @@ from .audit import ActivityRoute
 from .auth import active_user
 from .config import settings
 from .ai_enhancement import request_slot
-from .ai_providers import PROVIDERS, Provider, ProviderError, request_text, valid_model
+from .ai_providers import MODEL_CHOICES, PROVIDERS, Provider, ProviderError, request_text, valid_model
 
 _write_lock = threading.Lock()
 
@@ -134,7 +134,7 @@ def ai_settings_status():
     for id, config in PROVIDERS.items():
         _, saved_key, saved_model = connection_from(values, id)
         choices.append({"id": id, "name": config["name"], "configured": bool(saved_key),
-                        "model": saved_model, "default_model": config["default_model"]})
+                        "model": saved_model, "default_model": config["default_model"], "models": MODEL_CHOICES[id]})
     return {"configured": bool(key), "provider": provider, "provider_name": PROVIDERS[provider]["name"],
             "model": model, "saved_in_env": credential_path().is_file(), "providers": choices}
 
