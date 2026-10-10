@@ -50,3 +50,15 @@ quality requires a configured key and representative insulator images.
 
 API references: https://developers.openai.com/api/docs/guides/images-vision and
 https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses
+
+## Keep only the insulator without AI
+
+The dialog always offers an independent manual workflow. Click **1. Outline the
+insulator to keep**, then click ordered points around the target in the full image
+(minimum three, maximum 64). **Undo point** corrects the last click. Click **2. Preview
+hidden background** and inspect the mask, then **3. Apply changes** in the fixed footer.
+**Done** returns to the workspace; **Save draft** or **Save to inspection** persists it.
+The preview itself does not change the workspace. Invalid outlines are rejected by
+existing server validation. The existing focus area can be reused. AI suggestions and
+chat input are hidden when no API key is configured, to avoid suggesting unavailable
+edits. This manual workflow sends no image to OpenAI.
