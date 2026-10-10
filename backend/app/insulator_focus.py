@@ -84,18 +84,16 @@ def natural_context(rgb: np.ndarray):
     """Smooth navy/purple context from captured detail, never temperature data.
 
     Bilateral smoothing reduces background speckle while retaining tower outlines.
-    Warm colors are compressed into cool purple; dark areas stay dark instead of
-    being lifted to the pale, flat blue used by the legacy blue style.
+    Compress every background color, including purple cloud/terrain glow. A
+    warmth-only filter misses those pixels and leaves the background dominant.
+    Retain tonal structure without raising dark regions to a uniform blue floor.
     """
     source = cv2.bilateralFilter(rgb, 5, 18, 2).astype(np.float32)
-    light = source.max(axis=2) / 255
-    # Keep already-cool navy/purple context close to its captured appearance.
-    # A blanket recoloring makes even a feathered polygon look like a cut-out.
-    warmth = np.clip((np.maximum(source[..., 0], source[..., 1]) /
-                      np.maximum(source[..., 2], 1) - .4) / .8, 0, 1)
-    warmth = warmth * warmth * (3 - 2 * warmth)
-    cool = np.stack((3 + 18 * light, 2 + 6 * light, 18 + 65 * light), axis=-1)
-    return np.rint(source * (1 - warmth[..., None]) + cool * warmth[..., None]).astype(np.uint8)
+    peak = source.max(axis=2)
+    blue = .28 * source[..., 2] + .12 * peak
+    red = np.minimum(.28 * source[..., 0], .65 * blue)
+    green = np.minimum(.12 * source[..., 1], .2 * blue)
+    return np.rint(np.stack((red, green, blue), axis=-1)).astype(np.uint8)
 
 
 def enhance_insulator(rgb: np.ndarray, focus: InsulatorFocus, valid=None):

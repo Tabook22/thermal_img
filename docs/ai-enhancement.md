@@ -164,7 +164,7 @@ selection does not transmit images to an AI provider.
 
 ## Smooth natural background
 
-New AI requests prefer `natural`: dark navy scene texture with subdued purple
+The optional `natural` appearance uses: dark navy scene texture with subdued purple
 tower outlines, edge-preserving background smoothing, and an outward smooth
 transition around the focus. Selected insulator pixels and hot spots remain exact.
 The existing blue, solid, and dim modes retain their rendering. Choose
@@ -172,3 +172,21 @@ The existing blue, solid, and dim modes retain their rendering. Choose
 to use this style on an existing selection. New AI/manual focus previews use a
 0.6% image-width feather; the exact measurement mask is unaffected by feathering.
 Preview, saved work, editable packages, and report exports use the same renderer.
+
+
+## Uniform insulator enhancement
+
+New AI instructions and the example prompt prefer `solid`: a uniform dark-blue
+background with gentle local insulator detail enhancement. The vision model selects
+the entire insulator, including horizontal strings. Clarity is capped at .35 and
+detail at .25; shadow lifting is disabled in this mode. Original radiometric
+measurements remain unchanged. The display is labeled as visually processed.
+
+AI proposals returning legacy `blue` focus mode are normalized to `solid`.
+Explicit `natural` requests still retain subdued scene texture, now including
+suppression of broad purple clouds and terrain. Separate concealed areas use
+natural styling. Existing saved settings are not automatically rewritten.
+**AI Enhancement > Uniform background** previews gentle insulator enhancement
+and a uniform surrounding area using the existing selection and brush strokes,
+without another AI request. Review and click **Use this result**, then save.
+AI outlines remain approximate; inspect the full disc edges before applying.

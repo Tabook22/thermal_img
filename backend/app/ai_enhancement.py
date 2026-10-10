@@ -40,7 +40,7 @@ class Proposal(BaseModel):
     apply: bool
     focus: Area | None
     background_dim: float = Field(ge=0, le=1)
-    background_mode: Literal["dim", "blue", "natural"]
+    background_mode: Literal["dim", "blue", "natural", "solid"]
     concealed_mode: Literal["dim", "blue", "natural"]
     clarity: float = Field(ge=0, le=1)
     detail: float = Field(ge=0, le=1)
@@ -58,12 +58,16 @@ The image is the original full frame; coordinates are normalized 0..1, origin to
 Read the current settings and chat. Preserve settings/areas unless the user requests a change.
 Focus is a simple non-self-intersecting ordered polygon around the insulator to KEEP.
 Use 8-40 vertices following its visible silhouette with a small margin; never cut off discs.
-background_mode natural keeps the scene in smooth dark navy with subdued purple tower
-outlines, suppressing warm colors without a flat blue cut-out. Prefer natural for
-smooth, professional background heat suppression. blue is the older muted-blue style.
+background_mode solid replaces the surrounding display with uniform dark navy.
+Prefer solid when asked to enhance the insulator and remove surrounding heat, and
+always choose solid when asked for a uniform background. Set background_dim=1.
+Use conservative clarity=.35, detail=.25, shadows=0 for gentle insulator enhancement.
+background_mode natural retains subdued scene texture; use it only when the user
+asks to keep mountains/tower/background objects visible. blue is a legacy style.
 When asked to focus only on insulator heat, identify the entire visible insulator yourself
 and suppress everything outside it, including warm tower steel, mountains, ground and sky.
-Keep background objects recognizable in blue; do not include the tower in the keep polygon.
+Do not include the tower or large gaps of background in the keep polygon. Follow
+the full disc silhouette on both sides, whether the insulator is horizontal or vertical.
 Do not require manual drawing for a single clearly identifiable insulator.
 For requests to make it beautiful or professional, prioritize clean background separation
 and faithful insulator detail. Preserve its hot spots, full length and every visible disc.
@@ -71,7 +75,7 @@ Do not use global brightness/contrast or a different palette just to suppress ba
 If an edit already has a focus, refine it based on the follow-up request rather than
 reintroducing background heat. Describe the prepared result briefly in plain language.
 background_mode dim darkens the background; strength 1 makes it black. Use only if requested.
-background_dim is strength (0 unchanged, 1 fully suppressed). Default to 1 for natural/blue.
+background_dim is strength (0 unchanged, 1 fully suppressed). Default to 1 for solid/natural/blue.
 concealed_areas are separate polygons (e.g. mountains ONLY). concealed_mode blue recolors
 those areas in muted blue; dim hides them in black. Preserve the insulator.
 Blue does NOT mean zero temperature and does NOT correct reflected radiation or sensor data.
@@ -121,13 +125,20 @@ def propose(rgb, body: AIEnhancementRequest, key: str, model: str, provider: Pro
         plan = Proposal.model_validate_json(text)
         if not plan.apply:
             return plan.message, None
+        # Display styling is deterministic. A model may repeat the legacy "blue"
+        # value from chat history; it must not undo the uniform finish requested
+        # by this workflow. Saved/manual legacy blue projects are still readable.
+        if plan.background_mode == "blue":
+            plan.background_mode = "solid"
+        if plan.concealed_mode == "blue":
+            plan.concealed_mode = "natural"
         patch = {name: getattr(plan, name) for name in ("brightness", "contrast", "denoise", "sharpen", "palette")}
         if plan.palette != "original" and body.analysis_id is None:
             raise ValueError("Temperature palettes need a completed thermal analysis. Ask to enhance the original colors instead.")
         patch["focus"] = InsulatorFocus(points=plan.focus.points, background_dim=plan.background_dim, background_mode=plan.background_mode,
-            clarity=0 if plan.background_mode == "natural" else plan.clarity,
-            detail=0 if plan.background_mode == "natural" else plan.detail,
-            shadows=0 if plan.background_mode == "natural" else plan.shadows,
+            clarity=0 if plan.background_mode == "natural" else min(plan.clarity, .35),
+            detail=0 if plan.background_mode == "natural" else min(plan.detail, .25),
+            shadows=0 if plan.background_mode in ("natural", "solid") else plan.shadows,
             feather=.006 if plan.background_mode == "natural" else .002,
             adaptive=True, match_surroundings=True,
             preserve_original=plan.background_mode == "natural" or not any((plan.clarity,plan.detail,plan.shadows)),

@@ -115,7 +115,7 @@ def test_concurrency_slot_releases_after_failure():
     with request_slot(99): pass
 
 
-def test_blue_context_preserves_target_texture_measurements_and_report(monkeypatch):
+def test_legacy_ai_blue_proposal_uses_uniform_finish_and_preserves_report(monkeypatch):
     from app.insulator_focus import focus_mask
     y, x = np.mgrid[:160, :240]
     light = ((x + y) % 200 + 30).astype(np.uint8)
@@ -134,8 +134,10 @@ def test_blue_context_preserves_target_texture_measurements_and_report(monkeypat
     rendered = np.asarray(Image.open(io.BytesIO(base64.b64decode(preview["preview"].split(",")[1]))))
     assert np.array_equal(rendered[mask], source[mask])
     assert np.all(rendered[~mask, 2] > rendered[~mask, 1])
-    assert np.all(rendered[~mask, 1] > rendered[~mask, 0])
-    assert np.ptp(rendered[~mask, 2]) > 10  # Texture remains visible, not a flat fill.
+    assert options.focus.background_mode == "solid"
+    assert options.focus.feather == .002
+    assert options.focus.preserve_original
+    assert np.array_equal(rendered[0, 0], [8, 19, 40])  # Uniform background beyond the feather.
     assert not preview["quantitative_legend"]
     report_image = Image.open(io.BytesIO(render_report_png(source, matrix, valid, restored, [], {})))
     assert np.array_equal(np.asarray(report_image), rendered)
@@ -155,7 +157,8 @@ def test_separate_blue_area_leaves_rest_of_scene_exact(monkeypatch):
     pixels = np.asarray(Image.open(io.BytesIO(base64.b64decode(rendered["preview"].split(",")[1]))))
     mask = focus_mask(source.shape, options.concealed_areas[0]).astype(bool)
     assert np.array_equal(pixels[~mask], source[~mask])
-    assert np.all(pixels[mask, 2] > pixels[mask, 0])
+    assert options.concealed_areas[0].background_mode == "natural"
+    assert pixels[30, 40, 2] > pixels[30, 40, 0]
 
 
 def test_natural_result_preserves_hotspots_and_feathers_only_outside(monkeypatch):
@@ -186,3 +189,43 @@ def test_natural_result_preserves_hotspots_and_feathers_only_outside(monkeypatch
     report = np.asarray(Image.open(io.BytesIO(render_report_png(source, matrix, np.ones_like(matrix, bool), restored, [], {}))))
     assert np.array_equal(report, output)
     assert np.array_equal(source, before) and np.array_equal(matrix, original_matrix)
+
+
+def test_natural_background_suppresses_purple_glow_and_preserves_structure():
+    from app.insulator_focus import natural_context
+    # Low red/blue ratios previously bypassed suppression entirely. These
+    # represent broad purple clouds, not just yellow/red thermal highlights.
+    source = np.zeros((40, 200, 3), np.uint8)
+    source[:, :50] = [35, 8, 100]
+    source[:, 50:100] = [65, 12, 150]
+    source[:, 100:150] = [220, 40, 160]
+    source[:, 150:180] = [255, 230, 30]
+    output = natural_context(source)
+    assert np.all(output[:, :180].max(axis=2) <= source[:, :180].max(axis=2) * .45)
+    assert np.all(output[:, :180, 2] > output[:, :180, 0])
+    assert output[20, 75, 2] > output[20, 25, 2] + 10
+    assert np.array_equal(output[:, 190:], source[:, 190:])  # No lifted blue floor.
+
+
+def test_uniform_ai_enhances_detail_without_changing_measurements(monkeypatch):
+    from app.insulator_focus import focus_mask
+    y, x = np.mgrid[:160, :240]
+    source = np.stack([70 + (x % 9) * 6, 8 + y % 8, 100 + x % 13], axis=-1).astype(np.uint8)
+    original = source.copy()
+    matrix = np.linspace(20, 45, 160 * 240, dtype=np.float32).reshape(160, 240)
+    temperatures = matrix.copy()
+    plan = proposal()
+    plan.update(background_mode="solid", clarity=.9, detail=.9, shadows=.8)
+    mock_provider(monkeypatch, plan)
+    _, settings = propose(source, AIEnhancementRequest(prompt="Enhance insulator with uniform surroundings"), "test", "gpt-4.1")
+    preview = render_enhancement(source, settings, matrix, np.ones_like(matrix, bool))
+    output = np.asarray(Image.open(io.BytesIO(base64.b64decode(preview["preview"].split(',')[1]))))
+    selected = focus_mask(source.shape, settings.focus).astype(bool)
+    import cv2
+    outside_feather = cv2.distanceTransform((~selected).astype(np.uint8), cv2.DIST_L2, 3) > 2
+    assert np.all(output[outside_feather] == [8, 19, 40])
+    assert np.any(output[selected] != source[selected])
+    assert settings.focus.clarity == .35 and settings.focus.detail == .25
+    assert settings.focus.shadows == 0
+    assert preview["focus_info"]["statistics"]["maximum_c"] == pytest.approx(float(matrix[selected].max()))
+    assert np.array_equal(matrix, temperatures) and np.array_equal(source, original)

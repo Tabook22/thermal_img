@@ -10,7 +10,7 @@ import {newFocus,type FocusPoint,type FocusStroke} from './InsulatorFocus';
 type Turn={role:'user'|'assistant';text:string};
 type Proposal={message:string;settings:EnhancementSettings|null};
 type ImageInput={id:number;name:string;preview_url:string};
-const EXAMPLE_PROMPT='Remove the heat from the background, especially the mountains, sky and tower. Focus only on the heat from the insulator itself. Keep the scene visible in smooth dark navy, with subtle purple tower outlines and natural transitions. Preserve the original insulator colors and hot spots; avoid a hard cut-out edge.';
+const EXAMPLE_PROMPT='Automatically select the whole insulator, gently enhance its captured detail, and make everything around it a uniform dark-blue background. Suppress heat colors from mountains, sky, ground and tower. Keep all insulator discs and hot spots, with smooth edges. Preserve the original temperature measurements.';
 export default function AIEnhancement({image,control:c,onUpload,uploading=false}:{image?:ImageInput;control:EnhancementController;onUpload:(files:FileList|null)=>Promise<void>;uploading?:boolean}){
  const [drawing,setDrawing]=useState(false);
  const [open,setOpen]=useState(false),[available,setAvailable]=useState<boolean|null>(null);
@@ -33,15 +33,20 @@ export default function AIEnhancement({image,control:c,onUpload,uploading=false}
  useEffect(()=>{bottom.current?.scrollIntoView({block:'nearest'})},[messages,busy]);
  const close=()=>{request.current?.abort();setBusy(false);setDrawing(false);setOpen(false);trigger.current?.focus()};
  const manual=()=>{setDrawing(true);setError('');setApplied(false)};
- const previewFocus=async(points:FocusPoint[],strokes:FocusStroke[]=[])=>{
-  if(!image)return;
+ const previewSettings=async(next:EnhancementSettings)=>{
+  if(blocked||!image)return;
   const controller=new AbortController();request.current=controller;setBusy(true);setError('');setApplied(false);
-  const next:EnhancementSettings={...c.settings,focus:{...newFocus(points,c.settings.focus),strokes,preserve_original:true,feather:.006,background_dim:1,background_mode:'natural',clarity:0,detail:0,shadows:0},concealed_areas:[]};
   try{
    const rendered=await api<{preview:string}>(`/api/images/${image.id}/enhancement/preview`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:next,analysis_id:c.analysis?.status==='completed'?c.analysis.id:null})});
    if(controller.signal.aborted)return;
    setProposal(next);setPreview(rendered.preview);setBase(current);setCompare(false);setDrawing(false);
   }catch(e:any){if(!controller.signal.aborted)setError(e.message)}finally{if(!controller.signal.aborted)setBusy(false)}
+ };
+ const previewFocus=(points:FocusPoint[],strokes:FocusStroke[]=[])=>previewSettings({...c.settings,focus:{...newFocus(points,c.settings.focus),strokes,preserve_original:true,feather:.006,background_dim:1,background_mode:'natural',clarity:0,detail:0,shadows:0},concealed_areas:[]});
+ const uniformBackground=()=>{
+  const seed=proposal&&!stale?proposal:c.settings;
+  if(!seed.focus)return;
+  void previewSettings({...seed,focus:{...seed.focus,background_mode:'solid',background_dim:1,feather:.002,preserve_original:false,adaptive:true,match_surroundings:true,clarity:.35,detail:.25,shadows:0},concealed_areas:[]});
  };
  const send=async()=>{
   if(blocked||!image||prompt.trim().length<3||!available)return;
@@ -73,7 +78,7 @@ export default function AIEnhancement({image,control:c,onUpload,uploading=false}
    <div className="aiMessages" role="log" aria-live="polite">
     {messages.length===0&&<div className="aiWelcome"><Sparkles size={24}/><h3>Keep the insulator’s heat in focus</h3><p>Ask AI to suppress heat colors from mountains, clouds, the tower or other surroundings. No drawing needed to get started.</p></div>}
     {messages.map((m,i)=><div key={i} className={`aiMessage ${m.role}`}><b>{m.role==='user'?'You':'AI assistant'}</b><p>{m.text}</p></div>)}
-    {busy&&<p role="status" className="aiWorking"><Sparkles size={15}/> AI is preparing your image…</p>}<div ref={bottom}/>
+    {busy&&<p role="status" className="aiWorking"><Sparkles size={15}/> Preparing your image…</p>}<div ref={bottom}/>
    </div>
    <form onSubmit={e=>{e.preventDefault();void send()}}><label htmlFor="ai-instruction">{messages.length?'Tell AI what to adjust':'What would you like AI to do?'}</label><textarea id="ai-instruction" value={prompt} maxLength={2000} rows={4} disabled={busy||uploading} onChange={e=>setPrompt(e.target.value)} placeholder="Remove background heat colors and focus on the insulator…"/><div><button type="button" className="aiExample" disabled={busy||uploading} onClick={()=>setPrompt(EXAMPLE_PROMPT)}>Use example prompt</button><button className="primary" disabled={blocked||!available||prompt.trim().length<3} type="submit"><Send size={15}/>{busy?'Enhancing…':messages.length?'Send to AI':'Enhance with AI'}</button></div></form>
    <small className="aiPrivacy">Sending shares the image preview and your message with {connection?.provider_name||'your AI provider'}. Original temperature data stays on this server.</small>
@@ -81,7 +86,8 @@ export default function AIEnhancement({image,control:c,onUpload,uploading=false}
   </section><section className="aiReview" aria-label="Review enhancement proposal">
    <div className="aiPreviewHead"><strong>{drawing?'Refine selection':preview?(compare?'Before':'AI result'):applied?'Applied result':'Your image'}</strong>{preview&&<div className="aiCompareSwitch" aria-label="Compare images"><button type="button" aria-pressed={compare} onClick={()=>setCompare(true)}>Before</button><button type="button" aria-pressed={!compare} onClick={()=>setCompare(false)}>After</button></div>}</div>
    {drawing&&image?<FocusOutlineEditor src={image.preview_url} initial={proposal?.focus||c.settings.focus} busy={busy} onPreview={(points,strokes)=>void previewFocus(points,strokes)} onCancel={()=>setDrawing(false)}/>:<><div className={`aiPreviewImage ${busy?'isWorking':''}`} aria-busy={busy}>{image?<div><img src={preview&&!compare?preview:c.src||image.preview_url} alt={preview&&!compare?'AI enhancement result':'Current thermal display'}/>{preview&&!compare&&outline&&proposal&&<svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Proposed mask outlines">{proposal.focus&&<polygon className="keepArea" points={proposal.focus.points.map(p=>`${p.x*1000},${p.y*1000}`).join(' ')}/>} {proposal.concealed_areas?.map((area,i)=><polygon key={i} className="hideArea" points={area.points.map(p=>`${p.x*1000},${p.y*1000}`).join(' ')}/>)}</svg>}</div>:<div className="aiEmptyImage"><ImagePlus size={40}/><p>Your image will appear here</p><button type="button" disabled={uploading} onClick={()=>fileInput.current?.click()}>Upload image</button></div>}{busy&&<span className="aiProcessingBadge" role="status">Preparing your result…</span>}</div>
-   <p className="aiReviewHint">{applied?'Applied to your workspace. Return to save or export your image.':preview?'Check the insulator edges. Use this result, or ask AI for another adjustment.':busy?'AI is selecting the insulator and adjusting the surrounding heat colors.':image?(messages.length?'Reply in the chat to prepare or refine your result.':'Describe your edit and click Enhance with AI. Your result will appear here.'):'Upload a thermal image to begin.'}</p>
+   {!drawing&&(proposal?.focus||c.settings.focus)&&<button type="button" className="aiSmoothFinish" disabled={blocked} onClick={uniformBackground} title="Gently enhance the selected insulator and make its surroundings uniform dark blue. No additional AI request."><Sparkles size={15}/>Uniform background</button>}
+   <p className="aiReviewHint">{applied?'Applied to your workspace. Return to save or export your image.':preview?'Check the insulator edges. Use this result, or ask AI for another adjustment.':busy?'Preparing your enhancement preview.':image?(messages.length?'Reply in the chat to prepare or refine your result.':'Describe your edit and click Enhance with AI. Your result will appear here.'):'Upload a thermal image to begin.'}</p>
    {preview&&<label className="aiOutline"><input type="checkbox" checked={outline} onChange={e=>setOutline(e.target.checked)}/>Show selection outline</label>}</>}
    <div className="aiMeasurementNote"><Check size={17}/><div><b>Original temperature data preserved</b><p>Blue background is a display effect. {c.analysis?.status==='completed'?'Focus readings use the selected insulator area; original full-frame readings remain available.':'Calibrated readings are available only when the image contains supported thermal data.'}</p></div></div>
   </section></div>
