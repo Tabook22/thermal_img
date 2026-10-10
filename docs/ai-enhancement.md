@@ -30,8 +30,10 @@ billing/quota errors are reported without exposing the key or upstream response 
   have a 70-second provider timeout and bounded input/output. Closing cancels the browser
   request, but an upstream request already sent may still finish and consume API usage.
 - Original pixels, calibrated matrices, and analysis parameters are unchanged. Masks
-  conceal the background in black, without inpainting/reconstruction. They do not remove
-  hidden pixels from MAX/MIN/AVG: use a measurement region to restrict readings.
+  recolor the background in muted blue (scene texture retained) or conceal it in black,
+  without inpainting/reconstruction. Blue does not mean zero temperature or correct
+  reflected radiation. Reports include a display-only footer for blue edits. Masks do not
+  remove background pixels from MAX/MIN/AVG: use a measurement region to restrict readings.
 - DJI SDK continues to handle radiometric decoding and available official palette LUTs.
   AI interpretation is a separate OpenAI service; local OpenCV renders the display edits.
 - AI outlines are approximate. Use manual freehand focus for precise boundaries. No
@@ -51,14 +53,20 @@ quality requires a configured key and representative insulator images.
 API references: https://developers.openai.com/api/docs/guides/images-vision and
 https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses
 
-## Keep only the insulator without AI
+## Suppress background heat colors without AI
 
 The dialog always offers an independent manual workflow. Click **1. Outline the
 insulator to keep**, then click ordered points around the target in the full image
 (minimum three, maximum 64). **Undo point** corrects the last click. Click **2. Preview
-hidden background** and inspect the mask, then **3. Apply changes** in the fixed footer.
+blue background** and inspect the mask, then **3. Apply changes** in the fixed footer.
 **Done** returns to the workspace; **Save draft** or **Save to inspection** persists it.
 The preview itself does not change the workspace. Invalid outlines are rejected by
 existing server validation. The existing focus area can be reused. AI suggestions and
 chat input are hidden when no API key is configured, to avoid suggesting unavailable
 edits. This manual workflow sends no image to OpenAI.
+
+Background appearance in Enhance image offers muted blue or darkening, with a suppression
+strength slider. Manual blue previews leave insulator detail settings at zero to preserve
+its existing colors. Stored settings without background_mode keep the prior darkening
+behavior. AI proposals can recolor only specified mountain/cloud polygons as well as
+recoloring everything outside a target outline.

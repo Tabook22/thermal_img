@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import cv2
+from typing import Literal
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,6 +22,7 @@ class InsulatorFocus(BaseModel):
     detail: float = Field(default=.5, ge=0, le=1)
     shadows: float = Field(default=.25, ge=0, le=1)
     background_dim: float = Field(default=0, ge=0, le=1)
+    background_mode: Literal["dim", "blue"] = "dim"
 
     @model_validator(mode="after")
     def nonempty_polygon(self):
@@ -47,6 +49,12 @@ def focus_mask(shape, focus: InsulatorFocus):
     mask = np.zeros((height, width), np.uint8)
     cv2.fillPoly(mask, [points], 1)
     return mask
+
+
+def blue_context(rgb: np.ndarray):
+    """Muted scene texture, deliberately unrelated to calibrated temperature colors."""
+    light = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255
+    return np.rint(np.stack((8 + 10*light, 19 + 22*light, 55 + 48*light), axis=-1)).astype(np.uint8)
 
 
 def enhance_insulator(rgb: np.ndarray, focus: InsulatorFocus, valid=None):
@@ -138,5 +146,7 @@ def enhance_insulator(rgb: np.ndarray, focus: InsulatorFocus, valid=None):
     output = rgb.copy()
     output[y0:y1, x0:x1] = np.rint(crop * (1 - weight) + enhanced * weight).astype(np.uint8)
     if focus.background_dim:
-        output[mask == 0] = np.rint(rgb[mask == 0].astype(np.float32) * (1 - focus.background_dim)).astype(np.uint8)
+        background = blue_context(rgb) if focus.background_mode == "blue" else np.zeros_like(rgb)
+        output[mask == 0] = np.rint(rgb[mask == 0].astype(np.float32) * (1 - focus.background_dim)
+                                  + background[mask == 0] * focus.background_dim).astype(np.uint8)
     return output, {"warning": warning, "bounds": [left, top, right, bottom], "pixels": int(len(xs))}

@@ -7,7 +7,7 @@ from typing import Literal
 import cv2
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from .insulator_focus import InsulatorFocus, enhance_insulator, focus_mask
+from .insulator_focus import InsulatorFocus, enhance_insulator, focus_mask, blue_context
 
 
 DJI_PALETTES = ("white_hot", "fulgurite", "iron_red", "hot_iron", "medical", "arctic",
@@ -135,7 +135,10 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
         display_mask = cv2.resize(mask.astype(np.uint8), (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST).astype(bool)
         result[~display_mask] = 0
     for area in s.concealed_areas:
-        result[focus_mask(result.shape, area).astype(bool)] = 0
+        area_mask = focus_mask(result.shape, area).astype(bool)
+        if s.palette != "original":
+            area_mask &= display_mask
+        result[area_mask] = blue_context(rgb)[area_mask] if area.background_mode == "blue" else 0
     ok, png = cv2.imencode(".png", cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
     if not ok:
         raise ValueError("Could not render the enhanced image")

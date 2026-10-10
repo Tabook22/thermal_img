@@ -82,7 +82,8 @@ def test_invalid_geometry_and_nan_are_rejected():
             InsulatorFocus(points=points)
 
 
-def test_rendering_and_saving_focus_preserve_original_file_metadata_and_matrix(tmp_path, monkeypatch):
+@pytest.mark.parametrize("background_mode", ["dim", "blue"])
+def test_rendering_and_saving_focus_preserve_original_file_metadata_and_matrix(tmp_path, monkeypatch, background_mode):
     monkeypatch.setattr(settings, "storage_root", tmp_path)
     rgb = faint_insulator()
     exif = Image.Exif()
@@ -104,7 +105,7 @@ def test_rendering_and_saving_focus_preserve_original_file_metadata_and_matrix(t
         db.add(AnalysisVersion(id=1, image_id=1, version=1, status="completed", matrix_path="matrix.npz",
                                width=120, height=160, stats_json=measurements))
         db.commit()
-        options = EnhancementSettings(focus=focus())
+        options = EnhancementSettings(focus=focus(background_mode=background_mode, background_dim=1))
         result = enhancement_preview(1, EnhancementRequest(settings=options, analysis_id=1), db)
         assert result["focus_info"]["pixels"] > 0
         assert not result["quantitative_legend"]

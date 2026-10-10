@@ -273,6 +273,29 @@ def render_report_png(
         right = min(width, max(left + 1, math.ceil((crop.x + crop.width) * width)))
         bottom = min(height, max(top + 1, math.ceil((crop.y + crop.height) * height)))
         output = output.crop((left, top, right, bottom))
+    focus = workspace.enhancement.focus
+    blue_background = (focus and focus.background_mode == "blue" and focus.background_dim > 0) or any(
+        area.background_mode == "blue" for area in workspace.enhancement.concealed_areas)
+    if blue_background:
+        # Keep this outside the captured frame, including for cropped exports.
+        font = _font(max(8, min(18, output.width // 35)))
+        draw = ImageDraw.Draw(output)
+        lines, line = [], ""
+        for word in "Blue background: display only. Original temperature data unchanged.".split():
+            candidate = f"{line} {word}".strip()
+            if line and draw.textbbox((0, 0), candidate, font=font)[2] > output.width - 12:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        lines.append(line)
+        line_height = font.getbbox("Ag")[3] + 5
+        labelled = Image.new("RGB", (output.width, output.height + line_height * len(lines) + 12), "#0b1b27")
+        labelled.paste(output, (0, 0))
+        draw = ImageDraw.Draw(labelled)
+        for index, line in enumerate(lines):
+            draw.text((6, output.height + 6 + index * line_height), line, font=font, fill="#d3e9f7")
+        output = labelled
     buffer = io.BytesIO(); output.save(buffer, "PNG", optimize=True)
     return buffer.getvalue()
 

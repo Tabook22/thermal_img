@@ -37,6 +37,8 @@ class Proposal(BaseModel):
     apply: bool
     focus: Area | None
     background_dim: float = Field(ge=0, le=1)
+    background_mode: Literal["dim", "blue"]
+    concealed_mode: Literal["dim", "blue"]
     clarity: float = Field(ge=0, le=1)
     detail: float = Field(ge=0, le=1)
     shadows: float = Field(ge=0, le=1)
@@ -53,8 +55,13 @@ The image is the original full frame; coordinates are normalized 0..1, origin to
 Read the current settings and chat. Preserve settings/areas unless the user requests a change.
 Focus is a simple non-self-intersecting ordered polygon around the insulator to KEEP.
 Use 8-40 vertices following its visible silhouette with a small margin; never cut off discs.
-background_dim 0 keeps background, 0.65 dims it, 1 hides it in black outside the focus.
-concealed_areas are separate polygons to hide in black (e.g. mountains or a tower ONLY).
+background_mode blue keeps scene texture in muted blue while suppressing warm colors.
+Use blue when asked to remove mountain/background heat but keep the scene visible.
+background_mode dim darkens the background; strength 1 makes it black. Use only if requested.
+background_dim is strength (0 unchanged, 1 fully suppressed). Default to 1 for blue.
+concealed_areas are separate polygons (e.g. mountains ONLY). concealed_mode blue recolors
+those areas in muted blue; dim hides them in black. Preserve the insulator.
+Blue does NOT mean zero temperature and does NOT correct reflected radiation or sensor data.
 Do not hide the insulator when asked to remove its background. Keep the whole target.
 Use an existing user-drawn focus as the target unless asked to change it.
 For detail improvement use conservative clarity/detail/shadows and denoise/sharpen.
@@ -119,10 +126,10 @@ def propose(rgb, body: AIEnhancementRequest, key: str, model: str):
         patch = {name: getattr(plan, name) for name in ("brightness", "contrast", "denoise", "sharpen", "palette")}
         if plan.palette != "original" and body.analysis_id is None:
             raise ValueError("Temperature palettes need a completed thermal analysis. Ask to enhance the original colors instead.")
-        patch["focus"] = InsulatorFocus(points=plan.focus.points, background_dim=plan.background_dim,
+        patch["focus"] = InsulatorFocus(points=plan.focus.points, background_dim=plan.background_dim, background_mode=plan.background_mode,
             clarity=plan.clarity, detail=plan.detail, shadows=plan.shadows,
             adaptive=True, match_surroundings=True) if plan.focus else None
-        patch["concealed_areas"] = [InsulatorFocus(points=area.points) for area in plan.concealed_areas]
+        patch["concealed_areas"] = [InsulatorFocus(points=area.points, background_mode=plan.concealed_mode) for area in plan.concealed_areas]
         result = EnhancementSettings.model_validate({**body.settings.model_dump(), **patch})
         return plan.message, result
     except httpx.TimeoutException:

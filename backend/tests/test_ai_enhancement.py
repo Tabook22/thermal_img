@@ -20,7 +20,7 @@ POINTS=[{"x":.3,"y":.1},{"x":.7,"y":.1},{"x":.7,"y":.9},{"x":.3,"y":.9}]
 def proposal(**overrides):
     return dict(message="Review this approximate insulator outline.",apply=True,
         focus={"points":[dict(p) for p in POINTS]},background_dim=1,clarity=0,detail=0,shadows=0,
-        concealed_areas=[],brightness=0,contrast=1,denoise=0,sharpen=0,palette="original",**overrides)
+        background_mode="dim",concealed_mode="dim",concealed_areas=[],brightness=0,contrast=1,denoise=0,sharpen=0,palette="original",**overrides)
 
 
 def mock_provider(monkeypatch,plan):
@@ -113,3 +113,46 @@ def test_concurrency_slot_releases_after_failure():
     with pytest.raises(ValueError):
         with request_slot(99): raise ValueError("test")
     with request_slot(99): pass
+
+
+def test_blue_context_preserves_target_texture_measurements_and_report(monkeypatch):
+    from app.insulator_focus import focus_mask
+    y, x = np.mgrid[:160, :240]
+    light = ((x + y) % 200 + 30).astype(np.uint8)
+    source = np.stack([light, light // 2, light // 4], axis=-1)
+    before = source.copy()
+    matrix = np.linspace(20, 80, 160 * 240, dtype=np.float32).reshape(160, 240)
+    matrix_before = matrix.copy()
+    valid = np.ones(matrix.shape, bool)
+    plan = proposal()
+    plan["background_mode"] = "blue"
+    mock_provider(monkeypatch, plan)
+    _, options = propose(source, AIEnhancementRequest(prompt="Suppress background heat colors"), "test", "gpt-4.1")
+    restored = ExportWorkspace.model_validate_json(ExportWorkspace(enhancement=options).model_dump_json())
+    mask = focus_mask(source.shape, restored.enhancement.focus).astype(bool)
+    preview = render_enhancement(source, restored.enhancement, matrix, valid)
+    rendered = np.asarray(Image.open(io.BytesIO(base64.b64decode(preview["preview"].split(",")[1]))))
+    assert np.array_equal(rendered[mask], source[mask])
+    assert np.all(rendered[~mask, 2] > rendered[~mask, 1])
+    assert np.all(rendered[~mask, 1] > rendered[~mask, 0])
+    assert np.ptp(rendered[~mask, 2]) > 10  # Texture remains visible, not a flat fill.
+    assert not preview["quantitative_legend"]
+    report = np.asarray(Image.open(io.BytesIO(render_report_png(source, matrix, valid, restored, [], {}))))
+    assert np.array_equal(report[:160], rendered)
+    assert report.shape[0] > 160  # A disclosure below the frame doesn't obscure any pixels.
+    assert np.array_equal(source, before)
+    assert np.array_equal(matrix, matrix_before)
+
+
+def test_separate_blue_area_leaves_rest_of_scene_exact(monkeypatch):
+    from app.insulator_focus import focus_mask
+    plan = proposal()
+    plan.update(focus=None, concealed_mode="blue", concealed_areas=[{"points": POINTS}])
+    mock_provider(monkeypatch, plan)
+    source = np.full((60, 80, 3), [200, 80, 10], np.uint8)
+    _, options = propose(source, AIEnhancementRequest(prompt="Only suppress mountain heat colors"), "test", "gpt-4.1")
+    rendered = render_enhancement(source, options)
+    pixels = np.asarray(Image.open(io.BytesIO(base64.b64decode(rendered["preview"].split(",")[1]))))
+    mask = focus_mask(source.shape, options.concealed_areas[0]).astype(bool)
+    assert np.array_equal(pixels[~mask], source[~mask])
+    assert np.all(pixels[mask, 2] > pixels[mask, 0])
