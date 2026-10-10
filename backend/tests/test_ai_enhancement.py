@@ -156,3 +156,33 @@ def test_separate_blue_area_leaves_rest_of_scene_exact(monkeypatch):
     mask = focus_mask(source.shape, options.concealed_areas[0]).astype(bool)
     assert np.array_equal(pixels[~mask], source[~mask])
     assert np.all(pixels[mask, 2] > pixels[mask, 0])
+
+
+def test_natural_result_preserves_hotspots_and_feathers_only_outside(monkeypatch):
+    from app.insulator_focus import focus_mask, natural_context
+    plan = proposal()
+    plan.update(background_mode="natural", clarity=.6, detail=.4)
+    mock_provider(monkeypatch, plan)
+    source = np.full((400, 1000, 3), [160, 40, 90], np.uint8)
+    source[150:170, 500:520] = [255, 240, 20]
+    source[:, :100] = [2, 0, 24]
+    before = source.copy()
+    matrix = np.full((400, 1000), 25, np.float32)
+    matrix[150:170, 500:520] = 45
+    original_matrix = matrix.copy()
+    _, settings = propose(source, AIEnhancementRequest(prompt="Smooth natural background"), "test", "gpt-4.1")
+    restored = ExportWorkspace.model_validate_json(ExportWorkspace(enhancement=settings, temperature_visibility={"maximum":False,"minimum":False}).model_dump_json())
+    rendered = render_enhancement(source, restored.enhancement, matrix, np.ones_like(matrix, bool))
+    output = np.asarray(Image.open(io.BytesIO(base64.b64decode(rendered["preview"].split(",")[1]))))
+    mask = focus_mask(source.shape, settings.focus).astype(bool)
+    assert np.array_equal(output[mask], source[mask])  # Includes every hotspot pixel.
+    edge = np.flatnonzero(mask[200])[0]
+    context = natural_context(source)
+    assert np.array_equal(output[200, edge-10], context[200, edge-10])
+    assert context[200, edge-1, 0] < output[200, edge-1, 0] < source[200, edge-1, 0]
+    assert np.array_equal(output[:, :100], context[:, :100])
+    assert np.max(context[:, :100]) < 30  # Dark background is not lifted to flat blue.
+    assert rendered["focus_info"]["statistics"]["maximum_c"] == 45
+    report = np.asarray(Image.open(io.BytesIO(render_report_png(source, matrix, np.ones_like(matrix, bool), restored, [], {}))))
+    assert np.array_equal(report, output)
+    assert np.array_equal(source, before) and np.array_equal(matrix, original_matrix)

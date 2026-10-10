@@ -161,3 +161,14 @@ readable. Version 1 is unchanged because new optional settings have legacy defau
 
 Assisted chat selection requires an administrator's configured AI provider key; manual
 selection does not transmit images to an AI provider.
+
+## Smooth natural background
+
+New AI requests prefer `natural`: dark navy scene texture with subdued purple
+tower outlines, edge-preserving background smoothing, and an outward smooth
+transition around the focus. Selected insulator pixels and hot spots remain exact.
+The existing blue, solid, and dim modes retain their rendering. Choose
+**Enhance image → Insulator focus → Background appearance → Smooth navy · natural scene**
+to use this style on an existing selection. New AI/manual focus previews use a
+0.6% image-width feather; the exact measurement mask is unaffected by feathering.
+Preview, saved work, editable packages, and report exports use the same renderer.

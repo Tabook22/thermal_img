@@ -40,8 +40,8 @@ class Proposal(BaseModel):
     apply: bool
     focus: Area | None
     background_dim: float = Field(ge=0, le=1)
-    background_mode: Literal["dim", "blue"]
-    concealed_mode: Literal["dim", "blue"]
+    background_mode: Literal["dim", "blue", "natural"]
+    concealed_mode: Literal["dim", "blue", "natural"]
     clarity: float = Field(ge=0, le=1)
     detail: float = Field(ge=0, le=1)
     shadows: float = Field(ge=0, le=1)
@@ -58,8 +58,9 @@ The image is the original full frame; coordinates are normalized 0..1, origin to
 Read the current settings and chat. Preserve settings/areas unless the user requests a change.
 Focus is a simple non-self-intersecting ordered polygon around the insulator to KEEP.
 Use 8-40 vertices following its visible silhouette with a small margin; never cut off discs.
-background_mode blue keeps scene texture in muted blue while suppressing warm colors.
-Use blue when asked to remove mountain/background heat but keep the scene visible.
+background_mode natural keeps the scene in smooth dark navy with subdued purple tower
+outlines, suppressing warm colors without a flat blue cut-out. Prefer natural for
+smooth, professional background heat suppression. blue is the older muted-blue style.
 When asked to focus only on insulator heat, identify the entire visible insulator yourself
 and suppress everything outside it, including warm tower steel, mountains, ground and sky.
 Keep background objects recognizable in blue; do not include the tower in the keep polygon.
@@ -70,7 +71,7 @@ Do not use global brightness/contrast or a different palette just to suppress ba
 If an edit already has a focus, refine it based on the follow-up request rather than
 reintroducing background heat. Describe the prepared result briefly in plain language.
 background_mode dim darkens the background; strength 1 makes it black. Use only if requested.
-background_dim is strength (0 unchanged, 1 fully suppressed). Default to 1 for blue.
+background_dim is strength (0 unchanged, 1 fully suppressed). Default to 1 for natural/blue.
 concealed_areas are separate polygons (e.g. mountains ONLY). concealed_mode blue recolors
 those areas in muted blue; dim hides them in black. Preserve the insulator.
 Blue does NOT mean zero temperature and does NOT correct reflected radiation or sensor data.
@@ -124,11 +125,15 @@ def propose(rgb, body: AIEnhancementRequest, key: str, model: str, provider: Pro
         if plan.palette != "original" and body.analysis_id is None:
             raise ValueError("Temperature palettes need a completed thermal analysis. Ask to enhance the original colors instead.")
         patch["focus"] = InsulatorFocus(points=plan.focus.points, background_dim=plan.background_dim, background_mode=plan.background_mode,
-            clarity=plan.clarity, detail=plan.detail, shadows=plan.shadows,
+            clarity=0 if plan.background_mode == "natural" else plan.clarity,
+            detail=0 if plan.background_mode == "natural" else plan.detail,
+            shadows=0 if plan.background_mode == "natural" else plan.shadows,
+            feather=.006 if plan.background_mode == "natural" else .002,
             adaptive=True, match_surroundings=True,
-            preserve_original=not any((plan.clarity,plan.detail,plan.shadows)),
+            preserve_original=plan.background_mode == "natural" or not any((plan.clarity,plan.detail,plan.shadows)),
             strokes=body.settings.focus.strokes if body.settings.focus and body.settings.focus.points==plan.focus.points else []) if plan.focus else None
-        patch["concealed_areas"] = [InsulatorFocus(points=area.points, background_mode=plan.concealed_mode) for area in plan.concealed_areas]
+        patch["concealed_areas"] = [InsulatorFocus(points=area.points, background_mode=plan.concealed_mode,
+            feather=.006 if plan.concealed_mode == "natural" else 0) for area in plan.concealed_areas]
         result = EnhancementSettings.model_validate({**body.settings.model_dump(), **patch})
         return plan.message, result
     except httpx.TimeoutException:

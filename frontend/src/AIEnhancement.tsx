@@ -10,7 +10,7 @@ import {newFocus,type FocusPoint,type FocusStroke} from './InsulatorFocus';
 type Turn={role:'user'|'assistant';text:string};
 type Proposal={message:string;settings:EnhancementSettings|null};
 type ImageInput={id:number;name:string;preview_url:string};
-const EXAMPLE_PROMPT='Remove the heat from the background, especially the mountains, sky and tower. Focus only on the heat from the insulator itself. Keep the surrounding scene visible in muted blue and enhance the image for a clear, professional result.';
+const EXAMPLE_PROMPT='Remove the heat from the background, especially the mountains, sky and tower. Focus only on the heat from the insulator itself. Keep the scene visible in smooth dark navy, with subtle purple tower outlines and natural transitions. Preserve the original insulator colors and hot spots; avoid a hard cut-out edge.';
 export default function AIEnhancement({image,control:c,onUpload,uploading=false}:{image?:ImageInput;control:EnhancementController;onUpload:(files:FileList|null)=>Promise<void>;uploading?:boolean}){
  const [drawing,setDrawing]=useState(false);
  const [open,setOpen]=useState(false),[available,setAvailable]=useState<boolean|null>(null);
@@ -36,7 +36,7 @@ export default function AIEnhancement({image,control:c,onUpload,uploading=false}
  const previewFocus=async(points:FocusPoint[],strokes:FocusStroke[]=[])=>{
   if(!image)return;
   const controller=new AbortController();request.current=controller;setBusy(true);setError('');setApplied(false);
-  const next:EnhancementSettings={...c.settings,focus:{...newFocus(points,c.settings.focus),strokes,preserve_original:true,feather:.001,background_dim:1,background_mode:'blue',clarity:0,detail:0,shadows:0},concealed_areas:[]};
+  const next:EnhancementSettings={...c.settings,focus:{...newFocus(points,c.settings.focus),strokes,preserve_original:true,feather:.006,background_dim:1,background_mode:'natural',clarity:0,detail:0,shadows:0},concealed_areas:[]};
   try{
    const rendered=await api<{preview:string}>(`/api/images/${image.id}/enhancement/preview`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({settings:next,analysis_id:c.analysis?.status==='completed'?c.analysis.id:null})});
    if(controller.signal.aborted)return;

@@ -29,7 +29,7 @@ class InsulatorFocus(BaseModel):
     detail: float = Field(default=.5, ge=0, le=1)
     shadows: float = Field(default=.25, ge=0, le=1)
     background_dim: float = Field(default=0, ge=0, le=1)
-    background_mode: Literal["dim", "blue", "solid"] = "dim"
+    background_mode: Literal["dim", "blue", "natural", "solid"] = "dim"
     strokes: list[FocusStroke] = Field(default_factory=list, max_length=200)
     preserve_original: bool = False  # Legacy projects retain their prior enhancement.
     feather: float = Field(default=0, ge=0, le=.01)
@@ -78,6 +78,24 @@ def blue_context(rgb: np.ndarray):
     """Muted scene texture, deliberately unrelated to calibrated temperature colors."""
     light = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255
     return np.rint(np.stack((8 + 10*light, 19 + 22*light, 55 + 48*light), axis=-1)).astype(np.uint8)
+
+
+def natural_context(rgb: np.ndarray):
+    """Smooth navy/purple context from captured detail, never temperature data.
+
+    Bilateral smoothing reduces background speckle while retaining tower outlines.
+    Warm colors are compressed into cool purple; dark areas stay dark instead of
+    being lifted to the pale, flat blue used by the legacy blue style.
+    """
+    source = cv2.bilateralFilter(rgb, 5, 18, 2).astype(np.float32)
+    light = source.max(axis=2) / 255
+    # Keep already-cool navy/purple context close to its captured appearance.
+    # A blanket recoloring makes even a feathered polygon look like a cut-out.
+    warmth = np.clip((np.maximum(source[..., 0], source[..., 1]) /
+                      np.maximum(source[..., 2], 1) - .4) / .8, 0, 1)
+    warmth = warmth * warmth * (3 - 2 * warmth)
+    cool = np.stack((3 + 18 * light, 2 + 6 * light, 18 + 65 * light), axis=-1)
+    return np.rint(source * (1 - warmth[..., None]) + cool * warmth[..., None]).astype(np.uint8)
 
 
 def enhance_insulator(rgb: np.ndarray, focus: InsulatorFocus, valid=None):
@@ -174,7 +192,7 @@ def enhance_insulator(rgb: np.ndarray, focus: InsulatorFocus, valid=None):
     output = rgb.copy()
     output[y0:y1, x0:x1] = np.rint(crop * (1 - weight) + enhanced * weight).astype(np.uint8)
     if focus.background_dim:
-        background = blue_context(rgb) if focus.background_mode == "blue" else np.full_like(rgb, [8, 19, 40]) if focus.background_mode == "solid" else np.zeros_like(rgb)
+        background = natural_context(rgb) if focus.background_mode == "natural" else blue_context(rgb) if focus.background_mode == "blue" else np.full_like(rgb, [8, 19, 40]) if focus.background_mode == "solid" else np.zeros_like(rgb)
         output[mask == 0] = np.rint(rgb[mask == 0].astype(np.float32) * (1 - focus.background_dim)
                                   + background[mask == 0] * focus.background_dim).astype(np.uint8)
     return output, {"warning": warning, "bounds": [left, top, right, bottom], "pixels": int(len(xs))}

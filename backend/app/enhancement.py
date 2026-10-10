@@ -7,7 +7,7 @@ from typing import Literal
 import cv2
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from .insulator_focus import InsulatorFocus, enhance_insulator, focus_mask, blue_context
+from .insulator_focus import InsulatorFocus, enhance_insulator, focus_mask, blue_context, natural_context
 
 
 DJI_PALETTES = ("white_hot", "fulgurite", "iron_red", "hot_iron", "medical", "arctic",
@@ -140,12 +140,14 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
         selected = focus_mask(rgb.shape, s.focus).astype(bool)
         if s.focus.preserve_original: result[selected] = rgb[selected]
         if s.focus.background_dim:
-            context = blue_context(rgb) if s.focus.background_mode == "blue" else np.full_like(rgb, [8, 19, 40]) if s.focus.background_mode == "solid" else np.zeros_like(rgb)
+            context = natural_context(rgb) if s.focus.background_mode == "natural" else blue_context(rgb) if s.focus.background_mode == "blue" else np.full_like(rgb, [8, 19, 40]) if s.focus.background_mode == "solid" else np.zeros_like(rgb)
             alpha = (~selected).astype(np.float32)
             if s.focus.feather:
                 # Feather outside only: narrow fittings and every selected source pixel survive.
                 distance = cv2.distanceTransform((~selected).astype(np.uint8), cv2.DIST_L2, 3)
                 alpha *= np.clip(distance / max(1., s.focus.feather * rgb.shape[1]), 0, 1)
+                if s.focus.background_mode == "natural":
+                    alpha = alpha * alpha * (3 - 2 * alpha)
             alpha = alpha[..., None] * s.focus.background_dim
             result = np.rint(result * (1 - alpha) + context * alpha).astype(np.uint8)
     # Invalid thermal pixels remain visibly masked even after spatial processing.
@@ -158,7 +160,13 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
             area_mask &= ~selected
         if s.palette != "original":
             area_mask &= display_mask
-        result[area_mask] = blue_context(rgb)[area_mask] if area.background_mode == "blue" else 0
+        context = natural_context(rgb) if area.background_mode == "natural" else blue_context(rgb) if area.background_mode == "blue" else np.zeros_like(rgb)
+        alpha = area_mask.astype(np.float32)
+        if area.background_mode == "natural" and area.feather:
+            distance = cv2.distanceTransform(np.pad(area_mask.astype(np.uint8), 1), cv2.DIST_L2, 3)[1:-1, 1:-1]
+            alpha *= np.clip(distance / max(1., area.feather * rgb.shape[1]), 0, 1)
+            alpha = alpha * alpha * (3 - 2 * alpha)
+        result = np.rint(result * (1 - alpha[..., None]) + context * alpha[..., None]).astype(np.uint8)
     ok, png = cv2.imencode(".png", cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
     if not ok:
         raise ValueError("Could not render the enhanced image")
