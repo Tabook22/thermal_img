@@ -34,6 +34,13 @@ if [[ -x /opt/dji-thermal-sdk/utility/bin/linux/release_x64/dji_irp ]]; then
 fi
 dc() { docker compose -p "$PROJECT" "${compose[@]}" "$@"; }
 
+# Keep the administrator-managed key private and recoverable across deployments.
+if dc ps --status running --services 2>/dev/null | grep -qx api \
+   && dc exec -T api test -f /data/ai-settings/.env; then
+    dc cp api:/data/ai-settings/.env "$backup_dir/ai-settings.env"
+    chmod 600 "$backup_dir/ai-settings.env"
+fi
+
 # Use SQLite's online backup API when an application database already exists.
 if dc ps --status running --services 2>/dev/null | grep -qx api \
    && dc exec -T api test -f /data/thermal.db; then

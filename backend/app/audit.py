@@ -51,6 +51,8 @@ def action_for(path, method):
         "/api/auth/login":("sign_in","access","Signed in"),
         "/api/auth/logout":("sign_out","access","Signed out"),
         "/api/auth/password":("password_change","account","Changed password"),
+        "/api/admin/settings/ai":("ai_key_update","settings","Updated OpenAI API key"),
+        "/api/admin/settings/ai/test":("ai_connection_test","settings","Tested OpenAI connection"),
         "/api/inspections":("inspection_create","inspection","Created inspection"),
         "/api/inspections/{inspection_id}/images":("image_upload","image","Uploaded image"),
         "/api/inspections/{inspection_id}/packages":("package_import","image","Imported editable inspection package"),

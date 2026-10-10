@@ -8,9 +8,25 @@ and Save to inspection use the same renderer/settings.
 
 ## Server setup
 
-Set `OPENAI_API_KEY` in the protected server `.env` (never in frontend code or chat).
+Sign in as an administrator and open **Settings → AI connection**. Paste your
+OpenAI API key, click **Save API key**, then **Test connection**. Saving activates
+the key immediately for AI enhancement and web search; no restart is needed.
+The test sends a short text request to OpenAI, uses API quota, and sends no image.
+Saved keys are never returned to the browser. To replace a key, enter a new one
+and save again. Only administrators can read connection status, save, or test it.
+
+The app saves `OPENAI_API_KEY` in `STORAGE_ROOT/ai-settings/.env` (production:
+`/data/ai-settings/.env` in the persistent `thermal_data` volume), separate from
+the deployment environment. On Linux its directory is owner-only `0700` and the
+file is `0600`. Writes are atomic; errors and activity logs exclude credentials.
+Back up this private file along with the volume; never commit it or include it in
+image exports. The production deployment script includes it in protected backups.
+It survives container recreation and takes precedence over `OPENAI_API_KEY` from
+the deployment environment. If this file is absent, that environment value remains
+the fallback. The application does not modify the root deployment `.env`.
+
 `OPENAI_ENHANCEMENT_MODEL` defaults to `gpt-4.1`; it must support vision and strict
-structured outputs on the Responses API. Recreate the API service after configuring it.
+structured outputs on the Responses API. Recreate the API service after changing the model.
 Existing web search uses the same API key, but its model setting is separate.
 With no key, the dialog explains setup and offers the manual focus tool. There is no
 simulated AI fallback in production. Provider authentication, model availability, and

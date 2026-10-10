@@ -26,6 +26,7 @@ from .conversation_pdf import render_conversation_pdf, render_conversation_text
 from .dji_palette import official_palette_luts
 from .enhancement import EnhancementSettings, auto_settings, render_enhancement
 from .ai_enhancement import AIEnhancementRequest, propose, request_slot
+from .ai_settings import read_api_key, router as ai_settings_router
 from .database import get_db, SessionLocal
 from .image_metadata import capture_note_text, extract_capture_metadata
 from .image_details import original_image_details
@@ -42,6 +43,7 @@ app.include_router(activity_router)
 app.include_router(inspection_bridge_router)
 app.include_router(auth_router)
 app.include_router(admin_review_router)
+app.include_router(ai_settings_router)
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins.split(","), allow_methods=["*"], allow_headers=["*"])
 
 @app.middleware("http")
@@ -228,7 +230,7 @@ def search_library(body:LibrarySearch):
 @app.post("/api/internet/search")
 def search_internet(body:InternetSearch):
     """Run an explicitly requested web search through the configured server key."""
-    key=settings.openai_api_key or os.getenv("OPENAI_API_KEY")
+    key=read_api_key()
     if not key: fail(503,"internet_search_unavailable","Internet search is not configured on this server")
     try:
         import httpx
@@ -346,17 +348,18 @@ def get_enhancement(image_id:int,db:Session=Depends(get_db)):
 
 @app.get("/api/ai-enhancement/status")
 def ai_enhancement_status():
-    return {"available": bool(settings.openai_api_key), "provider": "OpenAI"}
+    return {"available": bool(read_api_key()), "provider": "OpenAI"}
 
 
 @app.post("/api/images/{image_id}/enhancement/ai")
 def ai_enhancement(image_id:int, body:AIEnhancementRequest, db:Session=Depends(get_db)):
-    if not settings.openai_api_key:
+    key=read_api_key()
+    if not key:
         fail(503,"ai_not_configured","AI enhancement is not connected yet. Ask your administrator to configure the server's OpenAI API key.")
     rgb,_,_=enhancement_source(image_id,body.analysis_id,db)
     try:
         with request_slot(active_user().id):
-            message,proposed=propose(rgb,body,settings.openai_api_key,settings.openai_enhancement_model)
+            message,proposed=propose(rgb,body,key,settings.openai_enhancement_model)
         return {"message":message,"settings":proposed}
     except RuntimeError as exc:
         fail(429,"ai_busy",str(exc))
