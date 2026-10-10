@@ -11,6 +11,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from PIL.PngImagePlugin import PngInfo
 from pydantic import BaseModel, Field, model_validator
 
 from .enhancement import EnhancementSettings, render_enhancement
@@ -226,6 +227,8 @@ def render_report_png(
             value = chosen.get("temperature_c") if isinstance(chosen, dict) and "temperature_c" in chosen else stat.get("minimum_c")
             marker(chosen, value, "L", "#35b9ff")
 
+    if workspace.enhancement.focus:
+        analysis_stats=(rendered.get("focus_info") or {}).get("statistics")
     if not regions and analysis_stats:
         if workspace.temperature_visibility.maximum:
             marker(analysis_stats.get("maximum_location"), analysis_stats.get("maximum_c"), "H", "#ff7b2b", "full")
@@ -273,30 +276,12 @@ def render_report_png(
         right = min(width, max(left + 1, math.ceil((crop.x + crop.width) * width)))
         bottom = min(height, max(top + 1, math.ceil((crop.y + crop.height) * height)))
         output = output.crop((left, top, right, bottom))
-    focus = workspace.enhancement.focus
-    blue_background = (focus and focus.background_mode == "blue" and focus.background_dim > 0) or any(
-        area.background_mode == "blue" for area in workspace.enhancement.concealed_areas)
-    if blue_background:
-        # Keep this outside the captured frame, including for cropped exports.
-        font = _font(max(8, min(18, output.width // 35)))
-        draw = ImageDraw.Draw(output)
-        lines, line = [], ""
-        for word in "Blue background: display only. Original temperature data unchanged.".split():
-            candidate = f"{line} {word}".strip()
-            if line and draw.textbbox((0, 0), candidate, font=font)[2] > output.width - 12:
-                lines.append(line)
-                line = word
-            else:
-                line = candidate
-        lines.append(line)
-        line_height = font.getbbox("Ag")[3] + 5
-        labelled = Image.new("RGB", (output.width, output.height + line_height * len(lines) + 12), "#0b1b27")
-        labelled.paste(output, (0, 0))
-        draw = ImageDraw.Draw(labelled)
-        for index, line in enumerate(lines):
-            draw.text((6, output.height + 6 + index * line_height), line, font=font, fill="#d3e9f7")
-        output = labelled
-    buffer = io.BytesIO(); output.save(buffer, "PNG", optimize=True)
+    metadata = PngInfo()
+    metadata.add_text("Processing", "Visually processed presentation image; original source and calibrated temperatures preserved separately.")
+    if workspace.enhancement.focus:
+        metadata.add_text("MeasurementArea", "Insulator focus mask; background excluded from focus measurements.")
+        metadata.add_text("Background", "Suppressed background colors do not represent temperatures.")
+    buffer = io.BytesIO(); output.save(buffer, "PNG", optimize=True, pnginfo=metadata)
     return buffer.getvalue()
 
 

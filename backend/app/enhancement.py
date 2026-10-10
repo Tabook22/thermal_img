@@ -124,18 +124,38 @@ def render_enhancement(rgb: np.ndarray, s: EnhancementSettings, matrix=None, val
     result = global_adjust(result, s)
     focus_info = None
     if s.focus is not None:
-        result, focus_info = enhance_insulator(result, s.focus, mask)
+        # Background compositing happens last, after global/highlight adjustments.
+        foreground = s.focus.model_copy(update={"background_dim": 0})
+        result, focus_info = enhance_insulator(result, foreground, mask)
+        if has_matrix:
+            from .thermal import statistics
+            selected = focus_mask(matrix.shape, s.focus).astype(bool) & mask
+            focus_info["statistics"] = statistics(matrix, selected) if selected.any() else None
     if s.highlight:
         band = mask & (matrix >= s.highlight_low) & (matrix <= s.highlight_high)
         band = cv2.resize(band.astype(np.uint8), (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST).astype(bool)
         muted = cv2.cvtColor(cv2.cvtColor(result, cv2.COLOR_RGB2GRAY), cv2.COLOR_GRAY2RGB)
         result[~band] = (muted[~band] * .35).astype(np.uint8)
+    if s.focus:
+        selected = focus_mask(rgb.shape, s.focus).astype(bool)
+        if s.focus.preserve_original: result[selected] = rgb[selected]
+        if s.focus.background_dim:
+            context = blue_context(rgb) if s.focus.background_mode == "blue" else np.full_like(rgb, [8, 19, 40]) if s.focus.background_mode == "solid" else np.zeros_like(rgb)
+            alpha = (~selected).astype(np.float32)
+            if s.focus.feather:
+                # Feather outside only: narrow fittings and every selected source pixel survive.
+                distance = cv2.distanceTransform((~selected).astype(np.uint8), cv2.DIST_L2, 3)
+                alpha *= np.clip(distance / max(1., s.focus.feather * rgb.shape[1]), 0, 1)
+            alpha = alpha[..., None] * s.focus.background_dim
+            result = np.rint(result * (1 - alpha) + context * alpha).astype(np.uint8)
     # Invalid thermal pixels remain visibly masked even after spatial processing.
     if s.palette != "original":
         display_mask = cv2.resize(mask.astype(np.uint8), (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_NEAREST).astype(bool)
         result[~display_mask] = 0
     for area in s.concealed_areas:
         area_mask = focus_mask(result.shape, area).astype(bool)
+        if s.focus and s.focus.preserve_original:
+            area_mask &= ~selected
         if s.palette != "original":
             area_mask &= display_mask
         result[area_mask] = blue_context(rgb)[area_mask] if area.background_mode == "blue" else 0

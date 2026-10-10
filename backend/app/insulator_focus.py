@@ -13,6 +13,13 @@ class FocusPoint(BaseModel):
     y: float = Field(ge=0, le=1)
 
 
+class FocusStroke(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
+    points: list[FocusPoint] = Field(min_length=1, max_length=1000)
+    radius: float = Field(ge=.0005, le=.1)  # Fraction of source width, independent of viewer zoom.
+    erase: bool = False
+
+
 class InsulatorFocus(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False, extra="forbid")
     points: list[FocusPoint] = Field(min_length=3, max_length=256)
@@ -22,10 +29,20 @@ class InsulatorFocus(BaseModel):
     detail: float = Field(default=.5, ge=0, le=1)
     shadows: float = Field(default=.25, ge=0, le=1)
     background_dim: float = Field(default=0, ge=0, le=1)
-    background_mode: Literal["dim", "blue"] = "dim"
+    background_mode: Literal["dim", "blue", "solid"] = "dim"
+    strokes: list[FocusStroke] = Field(default_factory=list, max_length=200)
+    preserve_original: bool = False  # Legacy projects retain their prior enhancement.
+    feather: float = Field(default=0, ge=0, le=.01)
+    brightness: float = Field(default=0, ge=-20, le=20)
+    contrast: float = Field(default=1, ge=.8, le=1.2)
+    gamma: float = Field(default=1, ge=.8, le=1.2)
+    denoise: float = Field(default=0, ge=0, le=.4)
+    sharpen: float = Field(default=0, ge=0, le=.4)
 
     @model_validator(mode="after")
     def nonempty_polygon(self):
+        if sum(len(s.points) for s in self.strokes) > 20000:
+            raise ValueError("Selection has too many brush points; simplify the mask")
         p = np.array([(v.x, v.y) for v in self.points], dtype=np.float32)
         if abs(cv2.contourArea(p)) < .00001:
             raise ValueError("Select a larger insulator area")
@@ -48,6 +65,12 @@ def focus_mask(shape, focus: InsulatorFocus):
     points = np.rint([(p.x * (width - 1), p.y * (height - 1)) for p in focus.points]).astype(np.int32)
     mask = np.zeros((height, width), np.uint8)
     cv2.fillPoly(mask, [points], 1)
+    for stroke in focus.strokes:
+        p = np.rint([(v.x * (width - 1), v.y * (height - 1)) for v in stroke.points]).astype(np.int32)
+        radius = max(1, round(stroke.radius * width))
+        value = 0 if stroke.erase else 1
+        if len(p) > 1: cv2.polylines(mask, [p], False, value, radius * 2, cv2.LINE_8)
+        for point in (p[0], p[-1]): cv2.circle(mask, tuple(point), radius, value, -1)
     return mask
 
 
@@ -132,6 +155,11 @@ def enhance_insulator(rgb: np.ndarray, focus: InsulatorFocus, valid=None):
         else:
             lab[..., 0] = np.rint(np.clip(corrected, 0, 255)).astype(np.uint8)
             enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+    if focus.denoise: enhanced = cv2.bilateralFilter(enhanced, 5, 5 + 20 * focus.denoise, 2)
+    if focus.sharpen: enhanced = cv2.addWeighted(enhanced, 1 + focus.sharpen, cv2.GaussianBlur(enhanced, (0, 0), 1), -focus.sharpen, 0)
+    if focus.brightness or focus.contrast != 1 or focus.gamma != 1:
+        tone = (enhanced.astype(np.float32) / 255 - .5) * focus.contrast + .5 + focus.brightness / 100
+        enhanced = np.rint(np.clip(tone, 0, 1) ** (1 / focus.gamma) * 255).astype(np.uint8)
     # Feather inward only: with dimming off, every pixel outside the area is exact.
     padded = np.pad(mask, 1)
     distance = cv2.distanceTransform(padded, cv2.DIST_L2, 3)[1:-1, 1:-1]
@@ -146,7 +174,7 @@ def enhance_insulator(rgb: np.ndarray, focus: InsulatorFocus, valid=None):
     output = rgb.copy()
     output[y0:y1, x0:x1] = np.rint(crop * (1 - weight) + enhanced * weight).astype(np.uint8)
     if focus.background_dim:
-        background = blue_context(rgb) if focus.background_mode == "blue" else np.zeros_like(rgb)
+        background = blue_context(rgb) if focus.background_mode == "blue" else np.full_like(rgb, [8, 19, 40]) if focus.background_mode == "solid" else np.zeros_like(rgb)
         output[mask == 0] = np.rint(rgb[mask == 0].astype(np.float32) * (1 - focus.background_dim)
                                   + background[mask == 0] * focus.background_dim).astype(np.uint8)
     return output, {"warning": warning, "bounds": [left, top, right, bottom], "pixels": int(len(xs))}

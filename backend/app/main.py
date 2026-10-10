@@ -297,21 +297,34 @@ def get_preview(image_id:int,db:Session=Depends(get_db)):
     preview_name=(item.metadata_json or {}).get("preview_path")
     path=settings.storage_root/preview_name if preview_name else None
     if path is None or not path.is_file(): fail(404,"preview_not_found","Preview is not available")
-    return FileResponse(path,media_type="image/jpeg")
+    try:
+        with Image.open(settings.storage_root/item.storage_name) as source:
+            source.thumbnail((1600,1200),Image.Resampling.LANCZOS);buffer=io.BytesIO();source.convert("RGB").save(buffer,"PNG")
+        return StreamingResponse(io.BytesIO(buffer.getvalue()),media_type="image/png")
+    except OSError: fail(422,"unreadable_image","The original image cannot be read")
+
+@app.get("/api/images/{image_id}/original")
+def original_download(image_id:int,db:Session=Depends(get_db)):
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    path=settings.storage_root/image.storage_name
+    if not path.is_file(): fail(404,"image_file_missing","Original image is missing")
+    return FileResponse(path,filename=image.original_name,media_type="application/octet-stream")
 
 class EnhancementRequest(BaseModel):
     settings: EnhancementSettings = Field(default_factory=EnhancementSettings)
     analysis_id: int | None = None
 
 
-def enhancement_source(image_id:int, analysis_id:int|None, db:Session):
+def enhancement_source(image_id:int, analysis_id:int|None, db:Session, full_resolution:bool=False):
     from PIL import Image
     item=db.get(ThermalImage,image_id)
     if not item: fail(404,"image_not_found","Image not found")
     preview_name=(item.metadata_json or {}).get("preview_path")
     if not preview_name: fail(404,"preview_not_found","Preview is not available")
     try:
-        with Image.open(settings.storage_root/preview_name) as source:
+        with Image.open(settings.storage_root/item.storage_name) as source:
+            if not full_resolution: source.thumbnail((1600,1200),Image.Resampling.LANCZOS)
             rgb=np.array(source.convert("RGB"))
     except OSError:
         fail(404,"preview_not_found","Preview is not available")
@@ -402,7 +415,7 @@ def export_material(image_id:int,body:ExportWorkspace,db:Session):
     latest=db.scalar(select(AnalysisVersion).where(AnalysisVersion.image_id==image_id,AnalysisVersion.status=="completed").order_by(AnalysisVersion.version.desc()).limit(1))
     matrix=valid=None
     if latest: matrix,valid=load_matrix(latest)
-    rgb,_,_=enhancement_source(image_id,None,db)
+    rgb,_,_=enhancement_source(image_id,None,db,full_resolution=True)
     regions=[region_dict(r) for r in db.scalars(select(Region).where(Region.analysis_id==latest.id)).all()] if latest else []
     luts=official_palette_luts(original,settings.dji_irp_path)
     metadata=image.metadata_json or {}; stored_guides=metadata.get("guide_images") or []
@@ -417,6 +430,21 @@ def export_material(image_id:int,body:ExportWorkspace,db:Session):
     try: report=render_report_png(rgb,matrix,valid,body,regions,latest.stats_json if latest else None,luts,guide_images)
     except ValueError as exc: fail(422,"export_unavailable",str(exc))
     return image,latest,original,regions,report
+
+@app.post("/api/images/{image_id}/exports/enhanced")
+def export_enhanced_image(image_id:int,body:ExportWorkspace,db:Session=Depends(get_db)):
+    from PIL.PngImagePlugin import PngInfo
+    import base64
+    image=db.get(ThermalImage,image_id)
+    if not image: fail(404,"image_not_found","Image not found")
+    latest=db.scalar(select(AnalysisVersion).where(AnalysisVersion.image_id==image_id,AnalysisVersion.status=="completed").order_by(AnalysisVersion.version.desc()))
+    rgb,matrix,valid=enhancement_source(image_id,latest.id if latest else None,db,full_resolution=True)
+    try: rendered=render_enhancement(rgb,body.enhancement,matrix,valid,official_palette_luts(settings.storage_root/image.storage_name,settings.dji_irp_path))
+    except ValueError as exc: fail(422,"export_unavailable",str(exc))
+    output=Image.open(io.BytesIO(base64.b64decode(rendered["preview"].split(",")[1])))
+    metadata=PngInfo();metadata.add_text("Processing","Visually processed; suppressed background colors are not temperature readings. Original source and measurements unchanged.")
+    buffer=io.BytesIO();output.save(buffer,"PNG",pnginfo=metadata)
+    return StreamingResponse(io.BytesIO(buffer.getvalue()),media_type="image/png",headers={"Content-Disposition":f'attachment; filename="{safe_stem(image.original_name)}-enhanced.png"'})
 
 @app.post("/api/images/{image_id}/exports/report")
 def export_report_image(image_id:int,body:ExportWorkspace,db:Session=Depends(get_db)):

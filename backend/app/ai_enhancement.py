@@ -128,7 +128,9 @@ def propose(rgb, body: AIEnhancementRequest, key: str, model: str):
             raise ValueError("Temperature palettes need a completed thermal analysis. Ask to enhance the original colors instead.")
         patch["focus"] = InsulatorFocus(points=plan.focus.points, background_dim=plan.background_dim, background_mode=plan.background_mode,
             clarity=plan.clarity, detail=plan.detail, shadows=plan.shadows,
-            adaptive=True, match_surroundings=True) if plan.focus else None
+            adaptive=True, match_surroundings=True,
+            preserve_original=not any((plan.clarity,plan.detail,plan.shadows)),
+            strokes=body.settings.focus.strokes if body.settings.focus and body.settings.focus.points==plan.focus.points else []) if plan.focus else None
         patch["concealed_areas"] = [InsulatorFocus(points=area.points, background_mode=plan.concealed_mode) for area in plan.concealed_areas]
         result = EnhancementSettings.model_validate({**body.settings.model_dump(), **patch})
         return plan.message, result

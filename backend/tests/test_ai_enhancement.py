@@ -128,7 +128,7 @@ def test_blue_context_preserves_target_texture_measurements_and_report(monkeypat
     plan["background_mode"] = "blue"
     mock_provider(monkeypatch, plan)
     _, options = propose(source, AIEnhancementRequest(prompt="Suppress background heat colors"), "test", "gpt-4.1")
-    restored = ExportWorkspace.model_validate_json(ExportWorkspace(enhancement=options).model_dump_json())
+    restored = ExportWorkspace.model_validate_json(ExportWorkspace(enhancement=options, temperature_visibility={"maximum":False,"minimum":False}).model_dump_json())
     mask = focus_mask(source.shape, restored.enhancement.focus).astype(bool)
     preview = render_enhancement(source, restored.enhancement, matrix, valid)
     rendered = np.asarray(Image.open(io.BytesIO(base64.b64decode(preview["preview"].split(",")[1]))))
@@ -137,9 +137,9 @@ def test_blue_context_preserves_target_texture_measurements_and_report(monkeypat
     assert np.all(rendered[~mask, 1] > rendered[~mask, 0])
     assert np.ptp(rendered[~mask, 2]) > 10  # Texture remains visible, not a flat fill.
     assert not preview["quantitative_legend"]
-    report = np.asarray(Image.open(io.BytesIO(render_report_png(source, matrix, valid, restored, [], {}))))
-    assert np.array_equal(report[:160], rendered)
-    assert report.shape[0] > 160  # A disclosure below the frame doesn't obscure any pixels.
+    report_image = Image.open(io.BytesIO(render_report_png(source, matrix, valid, restored, [], {})))
+    assert np.array_equal(np.asarray(report_image), rendered)
+    assert "Visually processed" in report_image.info["Processing"]
     assert np.array_equal(source, before)
     assert np.array_equal(matrix, matrix_before)
 
