@@ -1,10 +1,24 @@
-# Insulator Focus
+# AI Enhancement
 
-The toolbar opens a chat and preview window. Describe an insulator to retain, background
-to hide, or gentle contrast/detail changes. Review the proposed outlines, compare with
-the current workspace, then Apply. Requests can refine the pending proposal before applying.
-Undo enhancement reverses the applied settings. Save draft, editable packages, report PNG,
-and Save to inspection use the same renderer/settings.
+The **AI Enhancement** toolbar button opens an upload, chat and result window, even
+before an image is loaded. Upload/change the image in the window, describe the edit,
+and click **Enhance with AI**. The initial example asks to suppress heat colors from
+mountains, sky and tower while preserving the insulator and keeping the scene blue.
+AI chooses the target; manual drawing is not the first step.
+
+Compare **Before / After**, request another adjustment in chat, then click **Use this
+result**. **Done — return to image** returns to the workspace; Save draft or Save to
+inspection persists it. Applying is one undoable adjustment. Selection outlines are
+hidden by default and manual refinement is under **Manual controls (optional)**.
+A clarification or failed request cannot apply a previous pending result. Switching
+images clears chat, pending results and in-flight requests so edits stay with the
+selected image. Provider connection and image readiness must complete before sending.
+
+The AI produces approximate visual selections, not guaranteed pixel-perfect
+segmentation. Check insulator edges in the preview. Source pixels and calibrated
+temperatures remain preserved; background blue is a display treatment. Original
+measurements are not rewritten to zero. The selected provider receives a visual
+preview only when the user sends a message.
 
 ## Server setup
 

@@ -60,6 +60,15 @@ Focus is a simple non-self-intersecting ordered polygon around the insulator to 
 Use 8-40 vertices following its visible silhouette with a small margin; never cut off discs.
 background_mode blue keeps scene texture in muted blue while suppressing warm colors.
 Use blue when asked to remove mountain/background heat but keep the scene visible.
+When asked to focus only on insulator heat, identify the entire visible insulator yourself
+and suppress everything outside it, including warm tower steel, mountains, ground and sky.
+Keep background objects recognizable in blue; do not include the tower in the keep polygon.
+Do not require manual drawing for a single clearly identifiable insulator.
+For requests to make it beautiful or professional, prioritize clean background separation
+and faithful insulator detail. Preserve its hot spots, full length and every visible disc.
+Do not use global brightness/contrast or a different palette just to suppress background heat.
+If an edit already has a focus, refine it based on the follow-up request rather than
+reintroducing background heat. Describe the prepared result briefly in plain language.
 background_mode dim darkens the background; strength 1 makes it black. Use only if requested.
 background_dim is strength (0 unchanged, 1 fully suppressed). Default to 1 for blue.
 concealed_areas are separate polygons (e.g. mountains ONLY). concealed_mode blue recolors
