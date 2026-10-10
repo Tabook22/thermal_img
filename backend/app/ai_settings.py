@@ -5,16 +5,16 @@ import tempfile
 import threading
 from pathlib import Path
 
-import httpx
 from dotenv import dotenv_values, set_key
 from fastapi import APIRouter, HTTPException
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, SecretStr, model_validator
 
 from .audit import ActivityRoute
 from .auth import active_user
 from .config import settings
 from .ai_enhancement import request_slot
+from .ai_providers import PROVIDERS, Provider, ProviderError, request_text, valid_model
 
 _write_lock = threading.Lock()
 
@@ -23,18 +23,46 @@ def credential_path() -> Path:
     return settings.storage_root / "ai-settings" / ".env"
 
 
-def read_api_key() -> str:
-    """Read on use so every worker and subsequent restart sees saved settings."""
+def read_values():
     path = credential_path()
     try:
         if path.exists():
-            return (dotenv_values(path, interpolate=False).get("OPENAI_API_KEY") or "").strip()
+            return dotenv_values(path, interpolate=False)
     except (OSError, UnicodeError):
         raise HTTPException(503, {"message": "AI settings could not be read. Ask the server administrator to check storage permissions."}) from None
-    return (settings.openai_api_key or "").strip()
+    return {}
+
+
+def connection_from(values, provider=None):
+    provider = provider or values.get("AI_PROVIDER") or "openai"
+    if provider not in PROVIDERS:
+        raise HTTPException(503, {"message": "Choose a supported AI provider in Settings."})
+    config = PROVIDERS[provider]
+    env = config["key_env"]
+    fallback_key = getattr(settings, env.lower(), None)
+    key = (values.get(env, fallback_key) or "").strip()
+    model_env = provider.upper() + "_ENHANCEMENT_MODEL"
+    model = (values.get(model_env) or getattr(settings, model_env.lower(), None) or config["default_model"]).strip()
+    if not valid_model(model):
+        raise HTTPException(503, {"message": "Choose a valid AI model ID in Settings."})
+    return provider, key, model
+
+
+def read_connection(provider=None):
+    """Read provider, model and key together so a concurrent save cannot mix them."""
+    return connection_from(read_values(), provider)
+
+
+def read_api_key() -> str:
+    # The existing reference web-search feature continues to use OpenAI only.
+    return read_connection("openai")[1]
 
 
 def persist_api_key(key: str):
+    persist_values({"OPENAI_API_KEY": key})
+
+
+def persist_values(values):
     path = credential_path()
     temporary = None
     try:
@@ -45,7 +73,8 @@ def persist_api_key(key: str):
             temporary = Path(name)
             with os.fdopen(descriptor, "w", encoding="utf-8") as output:
                 if path.exists(): output.write(path.read_text(encoding="utf-8"))
-            set_key(str(temporary), "OPENAI_API_KEY", key, quote_mode="always")
+            for name, value in values.items():
+                set_key(str(temporary), name, value, quote_mode="always")
             temporary.chmod(0o600)
             with temporary.open("r+b") as content: os.fsync(content.fileno())
             os.replace(temporary, path)
@@ -67,7 +96,7 @@ class CredentialRoute(ActivityRoute):
                 return await original(request)
             except RequestValidationError:
                 # FastAPI's default validation response includes input values.
-                raise HTTPException(422, {"message": "Enter a valid OpenAI API key beginning with sk-, without spaces or extra lines."}) from None
+                raise HTTPException(422, {"message": "Check the provider, model ID, and API key. Use a key from the selected provider, without spaces or extra lines."}) from None
         return handler
 
 
@@ -76,47 +105,61 @@ router = APIRouter(prefix="/api/admin/settings/ai", route_class=CredentialRoute)
 
 class KeyInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    api_key: SecretStr
+    provider: Provider = "openai"
+    model: str | None = None
+    api_key: SecretStr | None = None
 
-    @field_validator("api_key")
-    @classmethod
-    def valid_key(cls, value):
-        key = value.get_secret_value().strip()
-        if not re.fullmatch(r"sk-[A-Za-z0-9_-]{16,1000}", key):
-            raise ValueError("Invalid API key")
-        return SecretStr(key)
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if self.model is not None:
+            self.model = self.model.strip()
+            if not valid_model(self.model):
+                raise ValueError("Invalid model")
+        if self.api_key is not None:
+            key = self.api_key.get_secret_value().strip()
+            pattern = {"openai": r"sk-(?!ant-)[A-Za-z0-9_-]{16,1000}",
+                       "anthropic": r"sk-ant-[A-Za-z0-9_-]{16,1000}",
+                       "gemini": r"AIza[A-Za-z0-9_-]{16,1000}"}[self.provider]
+            if not re.fullmatch(pattern, key):
+                raise ValueError("Invalid API key")
+            self.api_key = SecretStr(key)
+        return self
 
 
 @router.get("")
 def ai_settings_status():
-    return {"configured": bool(read_api_key()), "provider": "OpenAI",
-            "model": settings.openai_enhancement_model, "saved_in_env": credential_path().is_file()}
+    values = read_values()
+    provider, key, model = connection_from(values)
+    choices = []
+    for id, config in PROVIDERS.items():
+        _, saved_key, saved_model = connection_from(values, id)
+        choices.append({"id": id, "name": config["name"], "configured": bool(saved_key),
+                        "model": saved_model, "default_model": config["default_model"]})
+    return {"configured": bool(key), "provider": provider, "provider_name": PROVIDERS[provider]["name"],
+            "model": model, "saved_in_env": credential_path().is_file(), "providers": choices}
 
 
 @router.put("")
 def save_ai_settings(body: KeyInput):
-    persist_api_key(body.api_key.get_secret_value())
+    _, previous_key, previous_model = read_connection(body.provider)
+    if not body.api_key and not previous_key:
+        raise HTTPException(422, {"message": "Enter an API key for the selected provider before saving."})
+    values = {"AI_PROVIDER": body.provider, body.provider.upper() + "_ENHANCEMENT_MODEL": body.model or previous_model}
+    if body.api_key:
+        values[PROVIDERS[body.provider]["key_env"]] = body.api_key.get_secret_value()
+    persist_values(values)
     return ai_settings_status()
 
 
 @router.post("/test")
 def test_ai_connection():
-    key = read_api_key()
+    provider, key, model = read_connection()
     if not key: raise HTTPException(422, {"message": "Save an API key first."})
     try:
         with request_slot(active_user().id):
-            response = httpx.post("https://api.openai.com/v1/responses",
-                headers={"Authorization": f"Bearer {key}"}, timeout=25,
-                json={"model": settings.openai_enhancement_model, "store": False,
-                      "input": "Reply with OK.", "max_output_tokens": 32})
-        if response.status_code in (401, 403):
-            raise HTTPException(422, {"message": "OpenAI rejected the key or model access. Check the key's project permissions, then try again."})
-        if response.status_code == 429:
-            raise HTTPException(422, {"message": "OpenAI reports a usage or rate limit. Check API billing and limits, then try again."})
-        if response.status_code != 200 or response.json().get("status") != "completed":
-            raise HTTPException(502, {"message": "The AI connection test did not complete. Check model access or try again later."})
-        return {"connected": True, "message": "Connected to OpenAI. AI enhancement is ready.", "model": settings.openai_enhancement_model}
+            request_text(provider, key, model, "Reply with OK.", timeout=25, max_tokens=2048)
+        return {"connected": True, "message": f"Connected to {PROVIDERS[provider]['name']} using {model}.", "provider": provider, "model": model}
     except RuntimeError:
         raise HTTPException(429, {"message": "An AI request is already running. Try again when it finishes."}) from None
-    except (httpx.HTTPError, ValueError):
-        raise HTTPException(502, {"message": "Unable to verify the AI connection. Your saved key is unchanged; try again shortly."}) from None
+    except ProviderError as exc:
+        raise HTTPException(exc.status, {"message": str(exc)}) from None

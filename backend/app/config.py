@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_web_model: str = "gpt-4.1-mini"
     openai_enhancement_model: str = "gpt-4.1"
+    anthropic_api_key: str | None = None
+    gemini_api_key: str | None = None
     model_config = SettingsConfigDict(env_file=BACKEND_ROOT / ".env", extra="ignore")
 
 settings = Settings()

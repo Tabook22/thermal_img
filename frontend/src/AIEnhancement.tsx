@@ -13,6 +13,7 @@ type ImageInput={id:number;name:string;preview_url:string};
 export default function AIEnhancement({image,control:c}:{image?:ImageInput;control:EnhancementController}){
  const [drawing,setDrawing]=useState(false);
  const [open,setOpen]=useState(false),[available,setAvailable]=useState<boolean|null>(null);
+ const [connection,setConnection]=useState<{provider:string;provider_name:string;model:string}|null>(null);
  const [messages,setMessages]=useState<Turn[]>([]),[prompt,setPrompt]=useState(''),[error,setError]=useState('');
  const [busy,setBusy]=useState(false),[proposal,setProposal]=useState<EnhancementSettings|null>(null);
  const [preview,setPreview]=useState(''),[compare,setCompare]=useState(false),[outline,setOutline]=useState(true);
@@ -23,7 +24,7 @@ export default function AIEnhancement({image,control:c}:{image?:ImageInput;contr
  const stale=!!base&&base!==current;
  useEffect(()=>()=>request.current?.abort(),[]);
  useEffect(()=>{if(!open)return;dialog.current?.showModal();const controller=new AbortController();
-  setAvailable(null);api<{available:boolean}>('/api/ai-enhancement/status',{signal:controller.signal}).then(v=>setAvailable(v.available)).catch(e=>{if(!controller.signal.aborted)setError(e.message)});
+  setAvailable(null);setConnection(null);api<{available:boolean;provider:string;provider_name:string;model:string}>('/api/ai-enhancement/status',{signal:controller.signal}).then(v=>{setAvailable(v.available);setConnection(v)}).catch(e=>{if(!controller.signal.aborted)setError(e.message)});
   return()=>controller.abort();
  },[open]);
  useEffect(()=>{bottom.current?.scrollIntoView({block:'nearest'})},[messages,busy]);
@@ -46,7 +47,7 @@ export default function AIEnhancement({image,control:c}:{image?:ImageInput;contr
   const history=[...messages,{role:'user' as const,text:question}];
   setMessages(history);setPrompt('');setError('');setBusy(true);setApplied(false);setDrawing(false);
   try{
-   const answer=await api<Proposal>(`/api/images/${image.id}/enhancement/ai`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:question,history:messages.slice(-12),settings:seed,analysis_id:c.analysis?.status==='completed'?c.analysis.id:null})});
+   const answer=await api<Proposal>(`/api/images/${image.id}/enhancement/ai`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:connection?.provider,model:connection?.model,prompt:question,history:messages.slice(-12),settings:seed,analysis_id:c.analysis?.status==='completed'?c.analysis.id:null})});
    if(controller.signal.aborted)return;
    setMessages([...history,{role:'assistant',text:answer.message}]);
    if(answer.settings){
@@ -63,11 +64,12 @@ export default function AIEnhancement({image,control:c}:{image?:ImageInput;contr
   <header><div><span className="aiEyebrow">PRECISE THERMAL DISPLAY EDITING</span><h2 id="ai-enhance-title"><Sparkles/> Insulator Focus</h2><p>{image.name}</p></div><button type="button" aria-label="Close Insulator Focus" onClick={close}><X/></button></header>
   <div className="aiEnhanceBody"><section className="aiConversation" aria-label="Enhancement conversation">
    <div className="aiDirectFocus"><b>Suppress background heat colors</b><p>Keep mountains, clouds and the tower visible in muted blue. Preserve the insulator’s thermal colors. Works without AI.</p><button type="button" className="primary" disabled={busy} onClick={manual}>1. Outline the insulator to keep</button>{c.settings.focus&&<button type="button" disabled={busy} onClick={()=>void previewFocus(c.settings.focus!.points,c.settings.focus!.strokes)}>Use my existing focus area</button>}<ol><li>Outline what you want to keep.</li><li>Preview the blue background.</li><li>Apply, then save your image.</li></ol></div>
-   {available===false&&<div className="aiConnection" role="status"><strong>AI chat is not connected</strong><p>An administrator can connect OpenAI in Settings → AI connection. Manual selection and brush editing work now. Use <b>Outline the insulator to keep</b> above to make your edit now.</p></div>}
+   {available===false&&<div className="aiConnection" role="status"><strong>AI chat is not connected</strong><p>An administrator can select a provider and add its API key in Settings → AI connection. Manual selection and brush editing work now. Use <b>Outline the insulator to keep</b> above to make your edit now.</p></div>}
+   {available===true&&connection&&<p className="aiPrivacy">AI provider: <b>{connection.provider_name}</b> · {connection.model}</p>}
    {available===true&&messages.length===0&&<div className="aiSuggestions">{['Keep the scene visible but suppress background heat colors in blue. Preserve the insulator.','Dim the background and gently enhance the insulator.','Make only the mountains muted blue; preserve the tower and insulator colors.'].map(text=><button key={text} type="button" onClick={()=>setPrompt(text)}>{text}</button>)}</div>}
    {available===true&&<><div className="aiMessages" role="log" aria-live="polite">{messages.map((m,i)=><div key={i} className={`aiMessage ${m.role}`}><b>{m.role==='user'?'You':'AI assistant'}</b><p>{m.text}</p></div>)}{busy&&<p role="status" className="aiWorking">Reading your request and preparing a preview…</p>}<div ref={bottom}/></div>
    <form onSubmit={e=>{e.preventDefault();void send()}}><label htmlFor="ai-instruction">What would you like to change?</label><textarea id="ai-instruction" value={prompt} maxLength={2000} rows={3} onChange={e=>setPrompt(e.target.value)} placeholder="For example: keep insulator colors and make the surrounding scene muted blue…"/><div><button type="button" onClick={manual} disabled={busy}>Draw target manually</button><button className="primary" disabled={busy||!available||prompt.trim().length<3} type="submit"><Send size={15}/>{busy?'Working…':'Preview edit'}</button></div></form>
-   <small className="aiPrivacy">Sending shares this image’s visual preview and your prompt with OpenAI. The original radiometric file and temperature matrix stay on this server.</small></>}
+   <small className="aiPrivacy">Sending shares this image’s visual preview and your prompt with {connection?.provider_name||'the selected AI provider'}. The original radiometric file and temperature matrix stay on this server.</small></>}
   </section><section className="aiReview" aria-label="Review enhancement proposal">
    <div className="aiPreviewHead"><strong>{drawing?'1. Outline your insulator':preview?(compare?'Current workspace':'Proposed edit'):'Current workspace'}</strong>{preview&&<button type="button" aria-pressed={compare} onClick={()=>setCompare(!compare)}>{compare?'Show proposal':'Compare current'}</button>}</div>
    {drawing?<FocusOutlineEditor src={image.preview_url} initial={c.settings.focus} busy={busy} onPreview={(points,strokes)=>void previewFocus(points,strokes)} onCancel={()=>setDrawing(false)}/>:<><div className="aiPreviewImage"><div><img src={preview&&!compare?preview:c.src||image.preview_url} alt={preview&&!compare?'Proposed display edit':'Current thermal display'}/>{preview&&!compare&&outline&&proposal&&<svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Proposed mask outlines">{proposal.focus&&<polygon className="keepArea" points={proposal.focus.points.map(p=>`${p.x*1000},${p.y*1000}`).join(' ')}/>} {proposal.concealed_areas?.map((area,i)=><polygon key={i} className="hideArea" points={area.points.map(p=>`${p.x*1000},${p.y*1000}`).join(' ')}/>)}</svg>}</div></div>

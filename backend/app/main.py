@@ -26,7 +26,8 @@ from .conversation_pdf import render_conversation_pdf, render_conversation_text
 from .dji_palette import official_palette_luts
 from .enhancement import EnhancementSettings, auto_settings, render_enhancement
 from .ai_enhancement import AIEnhancementRequest, propose, request_slot
-from .ai_settings import read_api_key, router as ai_settings_router
+from .ai_settings import read_api_key, read_connection, router as ai_settings_router
+from .ai_providers import PROVIDERS
 from .database import get_db, SessionLocal
 from .image_metadata import capture_note_text, extract_capture_metadata
 from .image_details import original_image_details
@@ -348,18 +349,21 @@ def get_enhancement(image_id:int,db:Session=Depends(get_db)):
 
 @app.get("/api/ai-enhancement/status")
 def ai_enhancement_status():
-    return {"available": bool(read_api_key()), "provider": "OpenAI"}
+    provider,key,model=read_connection()
+    return {"available": bool(key), "provider": provider, "provider_name": PROVIDERS[provider]["name"], "model":model}
 
 
 @app.post("/api/images/{image_id}/enhancement/ai")
 def ai_enhancement(image_id:int, body:AIEnhancementRequest, db:Session=Depends(get_db)):
-    key=read_api_key()
+    provider,key,model=read_connection()
+    if (body.provider and body.provider!=provider) or (body.model and body.model!=model):
+        fail(409,"ai_provider_changed","The AI provider or model changed. Reopen Insulator Focus to review the selected connection before sending.")
     if not key:
-        fail(503,"ai_not_configured","AI enhancement is not connected yet. Ask your administrator to configure the server's OpenAI API key.")
+        fail(503,"ai_not_configured","AI enhancement is not connected yet. Ask your administrator to configure the AI provider in Settings.")
     rgb,_,_=enhancement_source(image_id,body.analysis_id,db)
     try:
         with request_slot(active_user().id):
-            message,proposed=propose(rgb,body,key,settings.openai_enhancement_model)
+            message,proposed=propose(rgb,body,key,model,provider)
         return {"message":message,"settings":proposed}
     except RuntimeError as exc:
         fail(429,"ai_busy",str(exc))

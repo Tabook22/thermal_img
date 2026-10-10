@@ -8,26 +8,35 @@ and Save to inspection use the same renderer/settings.
 
 ## Server setup
 
-Sign in as an administrator and open **Settings → AI connection**. Paste your
-OpenAI API key, click **Save API key**, then **Test connection**. Saving activates
-the key immediately for AI enhancement and web search; no restart is needed.
-The test sends a short text request to OpenAI, uses API quota, and sends no image.
-Saved keys are never returned to the browser. To replace a key, enter a new one
-and save again. Only administrators can read connection status, save, or test it.
+Sign in as an administrator and open **Settings → AI connection**. Select
+**OpenAI**, **Anthropic (Claude)**, or **Google (Gemini)**, choose a model ID,
+and paste the key issued by that provider. Click **Save AI settings**, then
+**Test connection**. Provider, model and key activate together; no restart is needed.
+The test sends a short text request to the saved provider, uses API quota, and
+sends no image. It verifies access; it does not assess image-selection quality.
+Saved keys are never returned to the browser. Each provider retains its own key
+and model. Leave the key blank to reuse that provider's saved key. Switching to
+a provider without a key is rejected. Only administrators can save or test settings.
 
-The app saves `OPENAI_API_KEY` in `STORAGE_ROOT/ai-settings/.env` (production:
+The app saves `AI_PROVIDER`, provider model settings, and `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` in `STORAGE_ROOT/ai-settings/.env` (production:
 `/data/ai-settings/.env` in the persistent `thermal_data` volume), separate from
 the deployment environment. On Linux its directory is owner-only `0700` and the
 file is `0600`. Writes are atomic; errors and activity logs exclude credentials.
 Back up this private file along with the volume; never commit it or include it in
 image exports. The production deployment script includes it in protected backups.
-It survives container recreation and takes precedence over `OPENAI_API_KEY` from
-the deployment environment. If this file is absent, that environment value remains
-the fallback. The application does not modify the root deployment `.env`.
+It survives container recreation. Saved values take precedence over the matching
+deployment environment values. Missing values fall back to configuration defaults.
+Existing OpenAI-only files remain compatible. The application does not modify the
+root deployment `.env`.
 
-`OPENAI_ENHANCEMENT_MODEL` defaults to `gpt-4.1`; it must support vision and strict
-structured outputs on the Responses API. Recreate the API service after changing the model.
-Existing web search uses the same API key, but its model setting is separate.
+Models must support image understanding and structured output. Suggestions are
+`gpt-4.1`, `claude-sonnet-5-5`, and `gemini-3.8-flash`; admins may enter another
+compatible model ID available to their account. Model settings are saved separately
+as `OPENAI_ENHANCEMENT_MODEL`, `ANTHROPIC_ENHANCEMENT_MODEL`, and
+`GEMINI_ENHANCEMENT_MODEL`. Account access and actual image quality require live testing.
+Existing online reference search continues to use the separately saved OpenAI key
+and `OPENAI_WEB_MODEL`; the provider selector controls image enhancement only.
 With no key, the dialog explains setup and offers the manual focus tool. There is no
 simulated AI fallback in production. Provider authentication, model availability, and
 billing/quota errors are reported without exposing the key or upstream response body.
@@ -36,10 +45,14 @@ billing/quota errors are reported without exposing the key or upstream response 
 
 - Authenticated users can request proposals only for images in their own workspace.
 - A re-encoded visual preview (at most 1280 pixels on its longest side), current display
-  settings, prompt, and up to 12 conversation turns are sent to OpenAI. EXIF/GPS metadata,
+  settings, prompt, and up to 12 conversation turns are sent to the selected provider. EXIF/GPS metadata,
   original radiometric files, and temperature matrices are not sent. Image pixels can
   still contain visible sensitive information; the dialog discloses the transfer.
-- Responses use `store:false`; this does not promise zero retention by the provider.
+- OpenAI Responses requests use `store:false`; provider retention terms still apply.
+- The editor displays the destination provider/model before sending. If the provider
+  changed since the editor opened, the request is rejected and the user must reopen it.
+  Keys are header-only, origins are fixed, redirects are disabled, and there is no
+  silent provider fallback. Anthropic uses Messages; Google uses generateContent.
 - The model proposes validated polygons and display parameters, never generated imagery
   or executable operations. Self-crossing/out-of-range polygons are rejected.
 - Only one request per user and three per API process may run concurrently. Requests
@@ -52,7 +65,7 @@ billing/quota errors are reported without exposing the key or upstream response 
   Focus readings exclude background pixels. Original full-frame readings remain available;
   for additional independent regions, use a measurement region to restrict readings.
 - DJI SDK continues to handle radiometric decoding and available official palette LUTs.
-  AI interpretation is a separate OpenAI service; local OpenCV renders the display edits.
+  AI interpretation is a separate provider service; local OpenCV renders the display edits.
 - AI outlines are approximate. Use the manual polygon and brushes for precise boundaries. No
   recovery of absent detail or diagnostic accuracy is promised.
 - Chat text is held in browser memory for the current image, not stored in activity logs.
@@ -68,8 +81,15 @@ UI verification covers the supplied DJI M4T image, saved polygon and brush masks
 zoom, pan, undo/redo, preview/apply, and reopening. AI tests use a mocked provider;
 live provider quality requires a configured key.
 
-API references: https://developers.openai.com/api/docs/guides/images-vision and
-https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses
+API references (reviewed 2026-10-10):
+
+- [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses)
+- [Anthropic structured outputs and schema limitations](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+- [Anthropic vision](https://platform.claude.com/docs/en/build-with-claude/vision)
+- [Anthropic models](https://platform.claude.com/docs/en/models/overview)
+- [Gemini structured outputs](https://ai.google.dev/gemini-api/docs/generate-content/structured-output)
+- [Gemini generateContent reference](https://ai.google.dev/api/generate-content)
+- [Gemini models](https://ai.google.dev/gemini-api/docs/models)
 
 ## Suppress background heat colors without AI
 
@@ -81,7 +101,7 @@ blue background** and inspect the mask, then **3. Apply changes** in the fixed f
 The preview itself does not change the workspace. Invalid outlines are rejected by
 existing server validation. The existing focus area can be reused. AI suggestions and
 chat input are hidden when no API key is configured, to avoid suggesting unavailable
-edits. This manual workflow sends no image to OpenAI.
+edits. This manual workflow sends no image to an AI provider.
 
 Background appearance in Enhance image offers muted blue, solid navy or darkening, with a suppression
 strength slider. Manual blue previews leave insulator detail settings at zero to preserve
@@ -118,5 +138,5 @@ downloads original bytes. Editable packages retain the original, brush strokes, 
 mask geometry, enhancement settings and matrix when present. Existing packages remain
 readable. Version 1 is unchanged because new optional settings have legacy defaults.
 
-Assisted chat selection still requires an administrator's OpenAI API key; manual
+Assisted chat selection requires an administrator's configured AI provider key; manual
 selection does not transmit images to an AI provider.

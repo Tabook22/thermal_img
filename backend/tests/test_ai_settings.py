@@ -104,8 +104,8 @@ def test_connection_is_explicit_bounded_and_redacts_provider_errors(workspace, m
     calls = []
     def post(url, **kwargs):
         calls.append((url, kwargs))
-        return httpx.Response(provider_status, json={"status": "completed", "secret": KEY})
-    monkeypatch.setattr(ai_settings.httpx, "post", post)
+        return httpx.Response(provider_status, json={"status": "completed", "secret": KEY, "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}]})
+    monkeypatch.setattr("app.ai_providers.httpx.post", post)
     assert client.put(URL, json={"api_key": KEY}).status_code == 200
     assert not calls  # Saving never sends the key to a provider without testing/editing.
     response = client.post(URL + "/test")
@@ -127,7 +127,7 @@ def test_missing_key_and_network_error(workspace, monkeypatch):
     ai_settings.persist_api_key(KEY)
     def fail(*args, **kwargs):
         raise httpx.ReadTimeout(KEY)
-    monkeypatch.setattr(ai_settings.httpx, "post", fail)
+    monkeypatch.setattr("app.ai_providers.httpx.post", fail)
     response = client.post(URL + "/test")
     assert response.status_code == 502 and KEY not in response.text
     assert ai_settings.read_api_key() == KEY

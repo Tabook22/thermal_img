@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .enhancement import EnhancementSettings, DJI_PALETTES
 from .insulator_focus import FocusPoint, InsulatorFocus
+from .ai_providers import Provider, request_text
 
 
 class ChatTurn(BaseModel):
@@ -20,6 +21,8 @@ class ChatTurn(BaseModel):
 
 
 class AIEnhancementRequest(BaseModel):
+    provider: Provider | None = None
+    model: str | None = Field(default=None, max_length=120)
     prompt: str = Field(min_length=3, max_length=2000)
     history: list[ChatTurn] = Field(default_factory=list, max_length=12)
     settings: EnhancementSettings = Field(default_factory=EnhancementSettings)
@@ -91,7 +94,7 @@ def request_slot(user_id):
             _active.discard(user_id)
 
 
-def propose(rgb, body: AIEnhancementRequest, key: str, model: str):
+def propose(rgb, body: AIEnhancementRequest, key: str, model: str, provider: Provider = "openai"):
     image = Image.fromarray(rgb)
     image.thumbnail((1280, 1280))
     stream = io.BytesIO()
@@ -103,23 +106,8 @@ def propose(rgb, body: AIEnhancementRequest, key: str, model: str):
                "conversation": [turn.model_dump() for turn in body.history],
                "request": body.prompt}
     try:
-        response = httpx.post("https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {key}"}, timeout=70,
-            json={"model": model, "store": False, "max_output_tokens": 5000,
-                  "instructions": INSTRUCTIONS,
-                  "input": [{"role": "user", "content": [
-                      {"type": "input_text", "text": json.dumps(context)},
-                      {"type": "input_image", "image_url": "data:image/jpeg;base64," + encoded, "detail": "high"}]}],
-                  "text": {"format": {"type": "json_schema", "name": "thermal_display_proposal",
-                                      "strict": True, "schema": Proposal.model_json_schema()}}})
-        if response.status_code != 200:
-            raise ValueError("AI service could not complete the request. Ask the administrator to check its API key, model access and quota.")
-        payload = response.json()
-        if payload.get("status") != "completed":
-            raise ValueError("AI did not complete a proposal. Try a shorter, more specific request.")
-        text = "".join(part.get("text", "") for item in payload.get("output", [])
-                       if item.get("type") == "message" for part in item.get("content", [])
-                       if part.get("type") == "output_text")
+        text = request_text(provider, key, model, json.dumps(context), instructions=INSTRUCTIONS,
+                            image=encoded, schema=Proposal.model_json_schema())
         plan = Proposal.model_validate_json(text)
         if not plan.apply:
             return plan.message, None
